@@ -1,22 +1,42 @@
-# Gestionnaire de fichiers — React + Vite
+# Gestionnaire de fichiers — React + Vite + Express (SQLite)
 
-Application web de gestion locale de fichiers (100% client) avec:
+Application web de gestion de fichiers avec:
 
-- Upload de fichiers (tous formats)
-- Liste avec téléchargement, renommage, suppression
-- Partage via Web Share API (si disponible), sinon WhatsApp/Email en repli
+- Upload multi-formats (via API Express + SQLite)
+- Liste avec prévisualisation, téléchargement, renommage, suppression
+- Partage via WhatsApp/Email (liens)
 - Recherche par nom/type
-- Thème bleu/blanc et interface responsive mobile
-- Stockage des fichiers dans SQLite (sql.js, WebAssembly) avec persistance via IndexedDB
+- Thème bleu/blanc, responsive mobile → bureau
+- Tableau de bord (KPIs, tendance 7j, récents)
+- Page Paramètres protégée par PIN (export DB serveur)
 
-## Lancer en dev
+## Démarrage développement
+
+Prérequis: Node.js LTS.
+
+1) Installer les dépendances racine et backend:
 
 ```powershell
 npm install
+cd .\backend; npm install; cd ..
+```
+
+2) Lancer le backend (Express + SQLite) sur 3002:
+
+```powershell
+npm run start --prefix .\backend
+```
+
+3) Lancer le front (Vite). Par défaut, la config est réglée pour servir sur le port 80 avec l’hôte "fichiers" pour une URL courte `http://fichiers`.
+
+```powershell
 npm run dev
 ```
 
-Ouvrir l’URL affichée par Vite (ex: http://localhost:5173/). Si le port 5173 est déjà pris, Vite en choisira un autre automatiquement.
+Notes dev:
+- Sur Windows, écouter sur le port 80 peut nécessiter d’exécuter le terminal en Administrateur. Sinon, changez le port dans `vite.config.js` (ex: 5175) et ouvrez l’URL affichée.
+- Un proxy de dev redirige `/api` vers le backend (variable `.env` VITE_API_PROXY, par défaut http://localhost:3002).
+- Pour un nom d’hôte personnalisé (`http://fichiers`), ajoutez une entrée dans `C:\Windows\System32\drivers\etc\hosts`: `127.0.0.1   fichiers`.
 
 ## Build production
 
@@ -25,18 +45,38 @@ npm run build
 npm run preview
 ```
 
-## Export/Import de la base
+## Prévisualisation intégrée (Office & co.)
 
-- Exporter DB: télécharge un fichier `fichiers.sqlite` contenant toute la base.
-- Importer DB: sélectionnez un `.sqlite` pour remplacer la base actuelle (les données affichées seront rechargées).
+- Word (.docx): rendu dans une modale grâce à `docx-preview`.
+- Excel (.xlsx/.xls/.csv): rendu table HTML via `xlsx`.
+- PDF: aperçu dans un iframe.
+- Images/Audio/Vidéo: tags HTML natifs.
+- Texte (.txt/.md/.json/.log): affichage brut.
+- PowerPoint (.ppt/.pptx): non pris en charge en aperçu (utiliser Télécharger pour ouvrir dans PowerPoint).
 
-## Détails techniques
+Limitations:
+- .doc (ancien format binaire) non supporté en aperçu; convertir en .docx.
+- .xls binaire peut s’afficher partiellement; .xlsx recommandé.
 
-- sql.js charge un module WASM (~660 kB) au premier usage; le premier chargement peut être plus long.
-- La base SQLite est gardée en mémoire et synchronisée dans IndexedDB après chaque écriture, garantissant la persistance locale entre sessions.
-- Tout s’exécute côté navigateur; aucun serveur n’est requis pour les fonctionnalités présentes.
+Utilisation: dans la page Fichiers, menu Actions → Ouvrir.
 
-## Limitations et pistes
+## Export de la base
 
-- Le partage de fichiers sans Web Share API ne peut pas joindre automatiquement un fichier; un téléchargement local est déclenché, puis l’ouverture WhatsApp/Email avec un message explicatif.
-- Possibles extensions: tags/dossiers, tri/pagination SQL, export/import plus fins, mode sombre.
+- Paramètres → Exporter DB: télécharge le fichier SQLite du serveur.
+- Import DB côté front est désactivé (source de vérité: serveur). Utilisez l’API/outil SQLite si besoin.
+
+## Architecture rapide
+
+- `backend/` Express + sqlite3 sur fichier (persistant), endpoints REST `/api/files`...
+- `src/` React + Vite, proxy `/api` → backend en dev.
+- `.env` (dev): `VITE_API_PROXY=http://localhost:3002`.
+
+## Sécurité
+
+- Accès Paramètres protégé par PIN (modifiable). Par défaut, initialisé depuis `VITE_DEFAULT_PIN`.
+
+## Prochaines pistes
+
+- Aperçu PowerPoint via conversion serveur (ex: LibreOffice headless → PDF).
+- Zoom/plein écran pour les aperçus.
+- Rôles/permissions si multi-utilisateurs.
