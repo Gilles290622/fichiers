@@ -1,4 +1,4 @@
-import { siWhatsapp as whatsapp, siAdobeacrobatreader as adobeacrobatreader, siAdobephotoshop as adobephotoshop } from 'simple-icons';
+import { siWhatsapp as whatsapp, siAdobeacrobatreader as adobeacrobatreader, siAdobephotoshop as adobephotoshop } from 'simple-icons/icons';
 
 const Svg = ({ path, title, color, size = 16, className }) => (
   <svg viewBox="0 0 24 24" width={size} height={size} className={className} role="img" aria-label={title}>

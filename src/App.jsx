@@ -136,7 +136,7 @@ function TypeBadge({ type, name }) {
   );
 }
 
-function FileRow({ file, onRefresh }) {
+function FileRow({ file, onRefresh, onPreview }) {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(file.name);
   const [open, setOpen] = useState(false);
@@ -166,6 +166,11 @@ function FileRow({ file, onRefresh }) {
     onRefresh();
   };
 
+  const preview = async () => {
+    onPreview?.(file);
+    setOpen(false);
+  };
+
   const doShareWhatsApp = () => {
     const text = `Je partage le fichier: ${file.name}. Je te l'enverrai via WhatsApp ou en pièce jointe si besoin.`;
     const wa = `https://wa.me/?text=${encodeURIComponent(text)}`;
@@ -191,6 +196,7 @@ function FileRow({ file, onRefresh }) {
         <button onClick={()=>setOpen(o=>!o)} title="Actions" className="icon-btn"><InfoIcon /></button>
         {open && (
           <div className="popover-menu" role="menu" onMouseLeave={()=>setOpen(false)}>
+            <button onClick={preview} role="menuitem">Ouvrir</button>
             <button onClick={download} role="menuitem">Télécharger</button>
             {editing ? (
               <>
@@ -211,7 +217,7 @@ function FileRow({ file, onRefresh }) {
   );
 }
 
-function FileList({ files, onRefresh }) {
+function FileList({ files, onRefresh, onPreview }) {
   if (!files.length) return <p className="empty">Aucun fichier. Ajoutez-en avec le bouton ci-dessus.</p>;
   return (
     <div className="table-wrap">
@@ -227,10 +233,104 @@ function FileList({ files, onRefresh }) {
         </thead>
         <tbody>
           {files.map((f) => (
-            <FileRow key={f.id} file={f} onRefresh={onRefresh} />
+            <FileRow key={f.id} file={f} onRefresh={onRefresh} onPreview={onPreview} />
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+function PreviewModal({ open, onClose, file, source }) {
+  // source: { blob, url, arrayBuffer }
+  const [htmlTable, setHtmlTable] = useState('');
+  const [textContent, setTextContent] = useState('');
+  useEffect(() => {
+    if (!open) return;
+    setHtmlTable('');
+    setTextContent('');
+  }, [open]);
+
+  if (!open || !file || !source) return null;
+  const ext = (file.name || '').toLowerCase().split('.').pop();
+  const type = (file.type || '').toLowerCase();
+
+  const isImage = type.startsWith('image/');
+  const isPdf = type === 'application/pdf' || ext === 'pdf';
+  const isAudio = type.startsWith('audio/');
+  const isVideo = type.startsWith('video/');
+  const isText = type.startsWith('text/') || ['txt','log','md','json','csv'].includes(ext);
+  const isDocx = ext === 'docx';
+  const isXlsx = ext === 'xlsx' || ext === 'xls' || ext === 'csv';
+  const isPptx = ext === 'pptx' || ext === 'ppt';
+
+  // Render helpers for docx/xlsx
+  useEffect(() => {
+    (async () => {
+      if (!open) return;
+      if (isText) {
+        try {
+          const t = await source.blob.text();
+          setTextContent(t);
+        } catch {}
+      }
+      if (isDocx) {
+        try {
+          const { renderAsync } = await import('docx-preview');
+          const container = document.getElementById('docx-container');
+          if (container) {
+            container.innerHTML = '';
+            await renderAsync(await source.blob.arrayBuffer(), container, undefined, { className: 'docx' });
+          }
+        } catch (e) {
+          setTextContent('Prévisualisation DOCX non disponible: ' + (e?.message || e));
+        }
+      }
+      if (isXlsx) {
+        try {
+          const mod = await import('xlsx');
+          const XLSX = mod?.default ?? mod;
+          const data = await source.blob.arrayBuffer();
+          const wb = XLSX.read(data, { type: 'array' });
+          const first = wb.SheetNames?.[0];
+          if (!first) throw new Error('Aucune feuille trouvée');
+          const ws = wb.Sheets[first];
+          const html = XLSX.utils.sheet_to_html(ws);
+          setHtmlTable(html);
+        } catch (e) {
+          setTextContent('Aperçu tableur non disponible: ' + (e?.message || e));
+        }
+      }
+    })();
+  }, [open, isText, isDocx, isXlsx, source]);
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={(e)=>e.stopPropagation()}>
+        <div className="modal-header">
+          <strong>{file.name}</strong>
+          <button className="icon-btn" onClick={onClose}>✖️</button>
+        </div>
+        <div className="modal-body">
+          {isImage && (<img src={source.url} alt={file.name} style={{maxWidth:'100%',height:'auto'}} />)}
+          {isPdf && (<iframe src={source.url} title={file.name} style={{width:'100%',height:'70vh',border:'none'}} />)}
+          {isAudio && (<audio src={source.url} controls style={{width:'100%'}} />)}
+          {isVideo && (<video src={source.url} controls style={{width:'100%'}} />)}
+          {isText && !isXlsx && !isDocx && (
+            <pre style={{whiteSpace:'pre-wrap',wordBreak:'break-word'}}>{textContent || '...'}</pre>
+          )}
+          {isDocx && (<div id="docx-container" className="docx-container" />)}
+          {isXlsx && htmlTable && (
+            <div className="table-preview" dangerouslySetInnerHTML={{ __html: htmlTable }} />
+          )}
+          {isPptx && (
+            <div className="muted">Aperçu PowerPoint non pris en charge. Utilisez Télécharger pour ouvrir dans PowerPoint.</div>
+          )}
+          {!isImage && !isPdf && !isAudio && !isVideo && !isText && !isDocx && !isXlsx && !isPptx && (
+            <div className="muted">Aperçu non pris en charge pour ce type de fichier.</div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -317,6 +417,7 @@ function Settings({ authed, setAuthed, onExport, onImport, pin, setPin }) {
 function FilesPage() {
   const [all, setAll] = useState([]);
   const [q, setQ] = useState('');
+  const [preview, setPreview] = useState({ open: false, file: null, source: null });
 
   const refresh = async () => {
     const list = await apiListFiles();
@@ -340,7 +441,19 @@ function FilesPage() {
         <FileUploader onAdded={refresh} />
         <SearchBar query={q} setQuery={setQ} />
       </div>
-      <FileList files={filtered} onRefresh={refresh} />
+      <FileList files={filtered} onRefresh={refresh} onPreview={async (file) => {
+        try {
+          const blob = await apiGetFileBlob(file.id);
+          const url = URL.createObjectURL(blob);
+          setPreview({ open: true, file, source: { blob, url } });
+        } catch (e) {
+          alert('Impossible d\'ouvrir: ' + (e?.message || e));
+        }
+      }} />
+      <PreviewModal open={preview.open} file={preview.file} source={preview.source} onClose={()=>{
+        if (preview.source?.url) URL.revokeObjectURL(preview.source.url);
+        setPreview({ open: false, file: null, source: null });
+      }} />
     </div>
   );
 }

@@ -119,6 +119,15 @@
 
 .settings-actions { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; }
 
+/* Preview modal */
+.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.35); display: flex; align-items: center; justify-content: center; z-index: 50; padding: 1rem; }
+.modal { width: min(960px, 95vw); max-height: 90vh; background: #fff; border-radius: 12px; border: 1px solid var(--border); box-shadow: 0 20px 60px rgba(0,0,0,0.2); display: flex; flex-direction: column; }
+.modal-header { display: flex; align-items: center; justify-content: space-between; padding: 0.75rem 1rem; border-bottom: 1px solid var(--border); }
+.modal-body { padding: 0.75rem 1rem; overflow: auto; }
+.docx-container { padding: 12px; background: #f9fbff; border: 1px solid var(--border); border-radius: 8px; }
+.table-preview table { width: 100%; border-collapse: collapse; }
+.table-preview td, .table-preview th { border: 1px solid var(--border); padding: 6px 8px; }
+
 /* Responsive tweaks */
 @media (max-width: 768px) {
   #root { padding: 1rem; }
