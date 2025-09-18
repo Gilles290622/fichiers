@@ -32,10 +32,7 @@ a:hover { color: var(--primary-600); }
 
 body {
   margin: 0;
-  display: flex;
-  place-items: center;
   min-width: 320px;
-  min-height: 100vh;
   background: var(--bg);
   color: var(--text);
 }

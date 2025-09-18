@@ -1,7 +1,11 @@
-import { addFile, deleteFile, getFileBlob, getFiles, updateFileName, exportDatabaseBlob, importDatabaseFromFile } from './sqlite'
+// Remplace les appels locale DB par l'API backend
+import { apiListFiles, apiGetFileBlob, apiUploadFile, apiDeleteFile, apiRenameFile, apiUploadFiles, apiExportDatabase } from './api'
 import './App.css'
 
 import { useEffect, useMemo, useState } from 'react'
+import { EmailIcon, PsdIcon, ImageIcon, VideoIcon, AudioIcon, ArchiveIcon, TextIcon, DefaultFileIcon, DownloadIcon, UploadIcon, InfoIcon, DashboardIcon, FolderIcon, SettingsGearIcon } from './icons'
+import { WhatsAppBrandIcon, PdfBrandIcon, PhotoshopBrandIcon } from './brandIcons'
+import { WordLocalIcon, ExcelLocalIcon, PowerPointLocalIcon, WinRARLocalIcon } from './brandLocal'
 
 function bytesToSize(bytes) {
   if (bytes === 0) return '0 B';
@@ -27,17 +31,24 @@ function timeAgo(date) {
 function FileUploader({ onAdded }) {
   const onChange = async (e) => {
     const files = Array.from(e.target.files || []);
-    for (const f of files) {
-      const blob = f;
-      await addFile({ name: f.name, type: f.type, size: f.size, blob });
+    try {
+      if (files.length > 1) {
+        await apiUploadFiles(files);
+      } else if (files.length === 1) {
+        await apiUploadFile(files[0]);
+      }
+      onAdded?.();
+    } finally {
+      e.target.value = '';
     }
-    onAdded?.();
-    e.target.value = '';
   };
   return (
     <label className="uploader">
       <input type="file" multiple onChange={onChange} style={{ display: 'none' }} />
-      <span>➕ Uploader des fichiers</span>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+        <UploadIcon />
+        Uploader des fichiers
+      </span>
     </label>
   );
 }
@@ -54,46 +65,84 @@ function SearchBar({ query, setQuery }) {
 }
 
 function ShareButtons({ file }) {
-  const share = async () => {
-    try {
-      const blob = await getFileBlob(file.id);
-      const fileForShare = new File([blob], file.name, { type: file.type || 'application/octet-stream' });
-      if (navigator.canShare && navigator.canShare({ files: [fileForShare] })) {
-        await navigator.share({ files: [fileForShare], title: file.name, text: 'Partagé depuis le gestionnaire' });
-        return;
-      }
-    } catch {
-      // fallthrough to URL-based share
-    }
-    // Fallback: download then open compose windows
-    const blob = await getFileBlob(file.id);
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = file.name;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-
-    const text = `Je partage le fichier: ${file.name}. Il a été téléchargé sur mon appareil. Je te l'enverrai en pièce jointe.`;
+  const shareWhatsApp = async () => {
+    const text = `Je partage le fichier: ${file.name}. Je te l'enverrai via WhatsApp ou en pièce jointe si besoin.`;
     const wa = `https://wa.me/?text=${encodeURIComponent(text)}`;
-    const mail = `mailto:?subject=${encodeURIComponent('Partage de fichier: ' + file.name)}&body=${encodeURIComponent(text)}`;
     window.open(wa, '_blank');
-    setTimeout(() => window.open(mail, '_blank'), 400);
+  };
+
+  const shareEmail = async () => {
+    const subject = `Partage de fichier: ${file.name}`;
+    const body = `Je partage le fichier: ${file.name}.\n\nSi besoin, je te l'enverrai en pièce jointe.`;
+    const mail = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    window.open(mail, '_blank');
   };
 
   return (
-    <button onClick={share} title="Partager">Partager</button>
+    <span className="share-buttons">
+  <button onClick={shareWhatsApp} title="Partager via WhatsApp" aria-label="Partager via WhatsApp" className="icon-btn brand whatsapp"><WhatsAppBrandIcon /></button>
+  <button onClick={shareEmail} title="Partager par e-mail" aria-label="Partager par e-mail" className="icon-btn email"><EmailIcon /></button>
+    </span>
+  );
+}
+
+function TypeBadge({ type, name }) {
+  const lower = (type || '').toLowerCase();
+  const ext = (name || '').toLowerCase().split('.').pop();
+
+  const byExt = (e) => {
+    if (!e) return null;
+    if (["jpg","jpeg","png","gif","webp","bmp","svg","heic"].includes(e)) return { icon: '🖼️', label: 'Image' };
+    if (["mp4","mov","webm","mkv","avi"].includes(e)) return { icon: '🎥', label: 'Vidéo' };
+    if (["mp3","wav","ogg","flac","m4a"].includes(e)) return { icon: '🎵', label: 'Audio' };
+    if (["pdf"].includes(e)) return { icon: '📕', label: 'PDF' };
+    if (e === 'rar') return { icon: '🗜️', label: 'RAR' };
+    if (["zip","7z","gz","tar"].includes(e)) return { icon: '🗜️', label: 'Archive' };
+    if (["doc","docx"].includes(e)) return { icon: '📄', label: 'DOC' };
+    if (["xls","xlsx","csv"].includes(e)) return { icon: '📊', label: 'Feuille' };
+    if (["ppt","pptx"].includes(e)) return { icon: '📽️', label: 'Diapo' };
+    if (["sqlite","db"].includes(e)) return { icon: '🗃️', label: 'Base' };
+    if (["txt","md","json","log"].includes(e)) return { icon: '📝', label: 'Texte' };
+    return null;
+  };
+
+  const info = (() => {
+    if (lower.startsWith('image/')) return { Icon: ImageIcon, label: 'Image' };
+    if (lower.startsWith('video/')) return { Icon: VideoIcon, label: 'Vidéo' };
+    if (lower.startsWith('audio/')) return { Icon: AudioIcon, label: 'Audio' };
+  if (lower === 'application/pdf') return { Icon: PdfBrandIcon, label: 'PDF' };
+  if (lower.includes('rar')) return { Icon: ArchiveIcon, label: 'RAR' };
+  if (lower.includes('zip') || lower.includes('7z')) return { Icon: ArchiveIcon, label: 'Archive' };
+  if (lower.includes('word') || lower.includes('msword') || lower.includes('officedocument.wordprocessingml')) return { Icon: WordLocalIcon, label: 'Word' };
+  if (lower.includes('excel') || lower.includes('spreadsheet') || lower.includes('csv') || lower.includes('officedocument.spreadsheetml')) return { Icon: ExcelLocalIcon, label: 'Excel' };
+  if (lower.includes('powerpoint') || lower.includes('officedocument.presentationml')) return { Icon: PowerPointLocalIcon, label: 'PowerPoint' };
+  if (lower.includes('photoshop') || ext === 'psd') return { Icon: PhotoshopBrandIcon, label: 'PSD' };
+    if (lower.includes('sqlite')) return { Icon: DefaultFileIcon, label: 'Base' };
+    if (lower.startsWith('text/')) return { Icon: TextIcon, label: 'Texte' };
+    const extInfo = byExt(ext);
+    if (extInfo) {
+      const map = { 'Image': ImageIcon, 'Vidéo': VideoIcon, 'Audio': AudioIcon, 'PDF': PdfBrandIcon, 'Archive': ArchiveIcon, 'DOC': WordLocalIcon, 'Feuille': ExcelLocalIcon, 'Diapo': PowerPointLocalIcon, 'Base': DefaultFileIcon, 'Texte': TextIcon, 'RAR': WinRARLocalIcon };
+      return { Icon: map[extInfo.label] || DefaultFileIcon, label: extInfo.label };
+    }
+    return { Icon: DefaultFileIcon, label: type || 'Fichier' };
+  })();
+
+  const I = info.Icon || DefaultFileIcon;
+  return (
+    <span className="type-badge" title={type || info.label} aria-label={info.label}>
+      <I />
+      <span className="label">{info.label}</span>
+    </span>
   );
 }
 
 function FileRow({ file, onRefresh }) {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(file.name);
+  const [open, setOpen] = useState(false);
 
   const download = async () => {
-    const blob = await getFileBlob(file.id);
+    const blob = await apiGetFileBlob(file.id);
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -106,35 +155,57 @@ function FileRow({ file, onRefresh }) {
 
   const rename = async () => {
     if (!name.trim()) return;
-    await updateFileName(file.id, name.trim());
+  await apiRenameFile(file.id, name.trim());
     setEditing(false);
     onRefresh();
   };
 
   const del = async () => {
     if (!confirm('Supprimer ce fichier ?')) return;
-    await deleteFile(file.id);
+  await apiDeleteFile(file.id);
     onRefresh();
+  };
+
+  const doShareWhatsApp = () => {
+    const text = `Je partage le fichier: ${file.name}. Je te l'enverrai via WhatsApp ou en pièce jointe si besoin.`;
+    const wa = `https://wa.me/?text=${encodeURIComponent(text)}`;
+    window.open(wa, '_blank');
+    setOpen(false);
+  };
+
+  const doShareEmail = () => {
+    const subject = `Partage de fichier: ${file.name}`;
+    const body = `Je partage le fichier: ${file.name}.\n\nSi besoin, je te l'enverrai en pièce jointe.`;
+    const mail = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    window.open(mail, '_blank');
+    setOpen(false);
   };
 
   return (
     <tr>
       <td>{editing ? <input value={name} onChange={(e)=>setName(e.target.value)} /> : file.name}</td>
-      <td>{file.type || '—'}</td>
+  <td><TypeBadge type={file.type} name={file.name} /></td>
       <td>{bytesToSize(file.size || 0)}</td>
       <td>{new Date(file.createdAt).toLocaleString()}</td>
-      <td className="actions">
-        <button onClick={download} title="Télécharger">⬇️</button>
-        {editing ? (
-          <>
-            <button onClick={rename}>💾</button>
-            <button onClick={()=>{setEditing(false); setName(file.name);}}>✖️</button>
-          </>
-        ) : (
-          <button onClick={()=>setEditing(true)} title="Renommer">✏️</button>
+      <td className="actions" style={{ position: 'relative' }}>
+        <button onClick={()=>setOpen(o=>!o)} title="Actions" className="icon-btn"><InfoIcon /></button>
+        {open && (
+          <div className="popover-menu" role="menu" onMouseLeave={()=>setOpen(false)}>
+            <button onClick={download} role="menuitem">Télécharger</button>
+            {editing ? (
+              <>
+                <button onClick={rename} role="menuitem">Enregistrer le nom</button>
+                <button onClick={()=>{setEditing(false); setName(file.name);}} role="menuitem">Annuler renommage</button>
+              </>
+            ) : (
+              <button onClick={()=>{setEditing(true); setOpen(false);}} role="menuitem">Renommer</button>
+            )}
+            <button onClick={del} role="menuitem">Supprimer</button>
+            <div className="separator"/>
+            <button onClick={doShareWhatsApp} role="menuitem">Partager WhatsApp</button>
+            <button onClick={doShareEmail} role="menuitem">Partager e-mail</button>
+          </div>
         )}
-        <button onClick={del} title="Supprimer">🗑️</button>
-        <ShareButtons file={file} />
       </td>
     </tr>
   );
@@ -178,9 +249,9 @@ function Sidebar({ current, go }) {
   return (
     <aside className="sidebar">
       <nav>
-        <button className={current==='dashboard'?'active':''} onClick={()=>go('dashboard')}>Tableau de bord</button>
-        <button className={current==='files'?'active':''} onClick={()=>go('files')}>Fichiers</button>
-        <button className={current==='settings'?'active':''} onClick={()=>go('settings')}>Paramètres</button>
+        <button className={current==='dashboard'?'active':''} onClick={()=>go('dashboard')}><span style={{display:'inline-flex',alignItems:'center',gap:8}}><DashboardIcon /> Tableau de bord</span></button>
+        <button className={current==='files'?'active':''} onClick={()=>go('files')}><span style={{display:'inline-flex',alignItems:'center',gap:8}}><FolderIcon /> Fichiers</span></button>
+        <button className={current==='settings'?'active':''} onClick={()=>go('settings')}><span style={{display:'inline-flex',alignItems:'center',gap:8}}><SettingsGearIcon /> Paramètres</span></button>
       </nav>
     </aside>
   );
@@ -208,7 +279,6 @@ function Settings({ authed, setAuthed, onExport, onImport, pin, setPin }) {
             if (inputPin === saved) setAuthed(true); else alert('PIN incorrect');
           }}>Se connecter</button>
         </div>
-        <p className="hint">PIN par défaut: 1234 (modifiez-le après connexion)</p>
       </div>
     );
   }
@@ -249,8 +319,8 @@ function FilesPage() {
   const [q, setQ] = useState('');
 
   const refresh = async () => {
-    const list = await getFiles();
-    setAll(list.map(({ id, name, type, size, createdAt }) => ({ id, name, type, size, createdAt })));
+    const list = await apiListFiles();
+    setAll(list.map(({ id, name, type, size, createdAt }) => ({ id, name, type, size: size || 0, createdAt: createdAt || Date.now() })));
   };
   useEffect(() => { refresh(); }, []);
 
@@ -298,7 +368,7 @@ function DashboardPage() {
 
   useEffect(() => {
     (async () => {
-      const list = await getFiles();
+      const list = await apiListFiles();
       setFiles(list);
     })();
   }, []);
@@ -381,33 +451,41 @@ export default function App() {
   const [view, setView] = useState('dashboard'); // 'dashboard' | 'files' | 'settings'
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [authed, setAuthed] = useState(false);
-  const [pin, setPin] = useState(localStorage.getItem('app_pin') || '1234');
+  const defaultPin = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_DEFAULT_PIN) || 'Gilles29@';
+  const [pin, setPin] = useState(localStorage.getItem('app_pin') || defaultPin);
+
+  // Initialise/maj du PIN si non défini ou encore à l'ancienne valeur par défaut
+  useEffect(() => {
+    const saved = localStorage.getItem('app_pin');
+    if (!saved || saved === '1234') {
+      localStorage.setItem('app_pin', defaultPin);
+      setPin(defaultPin);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // Astuce PIN par défaut visible dans les paramètres après authentification.
 
   const go = (v) => { setView(v); setSidebarOpen(false); };
 
   const handleExport = async () => {
-    const blob = await exportDatabaseBlob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'fichiers.sqlite';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+    try {
+      const blob = await apiExportDatabase();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'data.db';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      alert('Export échoué: ' + (e?.message || e));
+    }
   };
 
   const handleImport = async (e) => {
-    const f = e.target.files?.[0];
-    if (!f) return;
-    try {
-      await importDatabaseFromFile(f);
-      alert('Import réussi');
-    } catch (err) {
-      alert('Import échoué: ' + (err?.message || err));
-    } finally {
-      e.target.value = '';
-    }
+    alert("Import DB désactivé (source de vérité côté serveur). Utilisez l'API ou un outil SQLite si besoin.");
+    e.target.value = '';
   };
 
   return (
