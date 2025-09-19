@@ -14,11 +14,23 @@ const init = () => {
       data BLOB,
       type TEXT,
       size INTEGER,
-      createdAt INTEGER
+      createdAt INTEGER,
+      filepath TEXT,
+      folderId INTEGER
+    )`);
+    // Dossiers
+    db.run(`CREATE TABLE IF NOT EXISTS folders (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT,
+      createdAt INTEGER,
+      parentId INTEGER
     )`);
     // Add missing columns if upgrading existing DB (ignore errors if already exist)
-    db.run('ALTER TABLE files ADD COLUMN size INTEGER', () => {});
-    db.run('ALTER TABLE files ADD COLUMN createdAt INTEGER', () => {});
+  db.run('ALTER TABLE files ADD COLUMN size INTEGER', () => {});
+  db.run('ALTER TABLE files ADD COLUMN createdAt INTEGER', () => {});
+  db.run('ALTER TABLE files ADD COLUMN filepath TEXT', () => {});
+  db.run('ALTER TABLE files ADD COLUMN folderId INTEGER', () => {});
+  db.run('ALTER TABLE folders ADD COLUMN parentId INTEGER', () => {});
   });
 };
 

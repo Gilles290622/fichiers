@@ -1,9 +1,9 @@
 // Remplace les appels locale DB par l'API backend
-import { apiListFiles, apiGetFileBlob, apiUploadFile, apiDeleteFile, apiRenameFile, apiUploadFiles, apiExportDatabase } from './api'
+import { apiListFiles, apiGetFileBlob, apiUploadFile, apiDeleteFile, apiRenameFile, apiUploadFiles, apiExportDatabase, apiUploadFileWithProgress, apiUploadFilesWithProgress, apiListFolders, apiCreateFolder, apiMoveFile, apiMoveFiles } from './api'
 import './App.css'
 
 import { useEffect, useMemo, useState } from 'react'
-import { EmailIcon, PsdIcon, ImageIcon, VideoIcon, AudioIcon, ArchiveIcon, TextIcon, DefaultFileIcon, DownloadIcon, UploadIcon, InfoIcon, DashboardIcon, FolderIcon, SettingsGearIcon } from './icons'
+import { EmailIcon, PsdIcon, ImageIcon, VideoIcon, AudioIcon, ArchiveIcon, TextIcon, DefaultFileIcon, DownloadIcon, UploadIcon, InfoIcon, FolderIcon, SettingsGearIcon, EyeIcon, PencilIcon, SaveIcon, CancelIcon, TrashIcon } from './icons'
 import { WhatsAppBrandIcon, PdfBrandIcon, PhotoshopBrandIcon } from './brandIcons'
 import { WordLocalIcon, ExcelLocalIcon, PowerPointLocalIcon, WinRARLocalIcon } from './brandLocal'
 
@@ -28,27 +28,37 @@ function timeAgo(date) {
   return d.toLocaleDateString();
 }
 
-function FileUploader({ onAdded }) {
+function FileUploader({ onAdded, folderId }) {
+  const [uploading, setUploading] = useState(false);
+  const [percent, setPercent] = useState(0);
+
   const onChange = async (e) => {
     const files = Array.from(e.target.files || []);
     try {
-      if (files.length > 1) {
-        await apiUploadFiles(files);
-      } else if (files.length === 1) {
-        await apiUploadFile(files[0]);
-      }
+      if (!files.length) return;
+      setUploading(true);
+      setPercent(0);
+      // Always use multipart/form-data route (more robust for media)
+  await apiUploadFilesWithProgress(files, (p) => setPercent(Math.round(p?.percent || 0)), folderId);
       onAdded?.();
     } finally {
+      setTimeout(() => setPercent(0), 400);
+      setUploading(false);
       e.target.value = '';
     }
   };
   return (
-    <label className="uploader">
+    <label className="uploader" style={{ pointerEvents: uploading ? 'none' : 'auto', opacity: uploading ? 0.8 : 1 }}>
       <input type="file" multiple onChange={onChange} style={{ display: 'none' }} />
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
         <UploadIcon />
-        Uploader des fichiers
+        {uploading ? `Envoi... ${percent}%` : 'Uploader des fichiers'}
       </span>
+      {uploading && (
+        <div className="upload-progress" aria-label="Progression de l'envoi" title={`Envoi ${percent}%`}>
+          <div className="bar" style={{ width: `${percent}%` }} />
+        </div>
+      )}
     </label>
   );
 }
@@ -136,10 +146,14 @@ function TypeBadge({ type, name }) {
   );
 }
 
-function FileRow({ file, onRefresh, onPreview }) {
+function FileRow({ index, file, onRefresh, onPreview }) {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(file.name);
   const [open, setOpen] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [moveOpen, setMoveOpen] = useState(false);
+  const [dest, setDest] = useState(''); // string id or '' for root
+  const [folders, setFolders] = useState([]);
 
   const download = async () => {
     const blob = await apiGetFileBlob(file.id);
@@ -161,9 +175,7 @@ function FileRow({ file, onRefresh, onPreview }) {
   };
 
   const del = async () => {
-    if (!confirm('Supprimer ce fichier ?')) return;
-  await apiDeleteFile(file.id);
-    onRefresh();
+    setConfirmOpen(true);
   };
 
   const preview = async () => {
@@ -186,9 +198,45 @@ function FileRow({ file, onRefresh, onPreview }) {
     setOpen(false);
   };
 
+  const openMove = async () => {
+    const fs = await apiListFolders();
+    setFolders(fs);
+    setDest('');
+    setMoveOpen(true);
+    setOpen(false);
+  };
+
+  const confirmMove = async () => {
+    const folderId = dest ? Number(dest) : null;
+    await apiMoveFile(file.id, folderId);
+    setMoveOpen(false);
+    onRefresh?.();
+  };
+
   return (
+    <>
     <tr>
-      <td>{editing ? <input value={name} onChange={(e)=>setName(e.target.value)} /> : file.name}</td>
+      <td className="col-index">{(index ?? 0) + 1}</td>
+      <td>
+        {editing ? (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, maxWidth: '100%' }}>
+            <input
+              value={name}
+              onChange={(e)=>setName(e.target.value)}
+              onKeyDown={(e)=>{
+                if (e.key === 'Enter') rename();
+                if (e.key === 'Escape') { setEditing(false); setName(file.name); }
+              }}
+              style={{ minWidth: 180, maxWidth: 360 }}
+              autoFocus
+            />
+            <button className="icon-btn" title="Enregistrer" onClick={rename}><SaveIcon /></button>
+            <button className="icon-btn" title="Annuler" onClick={()=>{ setEditing(false); setName(file.name); }}><CancelIcon /></button>
+          </span>
+        ) : (
+          file.name
+        )}
+      </td>
   <td><TypeBadge type={file.type} name={file.name} /></td>
       <td>{bytesToSize(file.size || 0)}</td>
       <td>{new Date(file.createdAt).toLocaleString()}</td>
@@ -196,34 +244,78 @@ function FileRow({ file, onRefresh, onPreview }) {
         <button onClick={()=>setOpen(o=>!o)} title="Actions" className="icon-btn"><InfoIcon /></button>
         {open && (
           <div className="popover-menu" role="menu" onMouseLeave={()=>setOpen(false)}>
-            <button onClick={preview} role="menuitem">Ouvrir</button>
-            <button onClick={download} role="menuitem">Télécharger</button>
+            <button onClick={preview} role="menuitem"><span className="mi"><EyeIcon /></span> Ouvrir</button>
+            <button onClick={download} role="menuitem"><span className="mi"><DownloadIcon /></span> Télécharger</button>
             {editing ? (
               <>
-                <button onClick={rename} role="menuitem">Enregistrer le nom</button>
-                <button onClick={()=>{setEditing(false); setName(file.name);}} role="menuitem">Annuler renommage</button>
+                <button onClick={rename} role="menuitem"><span className="mi"><SaveIcon /></span> Enregistrer le nom</button>
+                <button onClick={()=>{setEditing(false); setName(file.name);}} role="menuitem"><span className="mi"><CancelIcon /></span> Annuler renommage</button>
               </>
             ) : (
-              <button onClick={()=>{setEditing(true); setOpen(false);}} role="menuitem">Renommer</button>
+              <button onClick={()=>{setEditing(true); setOpen(false);}} role="menuitem"><span className="mi rename"><PencilIcon /></span> Renommer</button>
             )}
-            <button onClick={del} role="menuitem">Supprimer</button>
+            <button onClick={openMove} role="menuitem"><span className="mi"><FolderIcon /></span> Déplacer…</button>
+            <button onClick={del} role="menuitem"><span className="mi danger"><TrashIcon /></span> Supprimer</button>
             <div className="separator"/>
-            <button onClick={doShareWhatsApp} role="menuitem">Partager WhatsApp</button>
-            <button onClick={doShareEmail} role="menuitem">Partager e-mail</button>
+            <button onClick={doShareWhatsApp} role="menuitem"><span className="mi"><WhatsAppBrandIcon /></span> Partager WhatsApp</button>
+            <button onClick={doShareEmail} role="menuitem"><span className="mi"><EmailIcon /></span> Partager e-mail</button>
           </div>
         )}
       </td>
     </tr>
+    {moveOpen && (
+      <div className="modal-overlay" onClick={()=>setMoveOpen(false)}>
+        <div className="modal" onClick={(e)=>e.stopPropagation()}>
+          <div className="modal-header">
+            <strong>Déplacer le fichier</strong>
+            <button className="icon-btn" onClick={()=>setMoveOpen(false)}>✖️</button>
+          </div>
+          <div className="modal-body">
+            <label>Choisir le dossier de destination</label>
+            <select value={dest} onChange={(e)=>setDest(e.target.value)}>
+              <option value="">Racine (sans dossier)</option>
+              {folders.map(f => (
+                <option key={f.id} value={String(f.id)}>{f.name}</option>
+              ))}
+            </select>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
+              <button onClick={()=>setMoveOpen(false)}>Annuler</button>
+              <button onClick={confirmMove}>Déplacer</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    )}
+    {confirmOpen && (
+      <div className="modal-overlay" onClick={()=>setConfirmOpen(false)}>
+        <div className="modal" onClick={(e)=>e.stopPropagation()}>
+          <div className="modal-header">
+            <strong>Confirmer la suppression</strong>
+            <button className="icon-btn" onClick={()=>setConfirmOpen(false)}>✖️</button>
+          </div>
+          <div className="modal-body">
+            <p>Voulez-vous vraiment supprimer « {file.name} » ? Cette action est définitive.</p>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
+              <button onClick={()=>setConfirmOpen(false)}>Annuler</button>
+              <button style={{ background: '#e53935', color: '#fff', borderColor: '#e53935' }} onClick={async ()=>{ await apiDeleteFile(file.id); setConfirmOpen(false); onRefresh(); }}>Supprimer</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   );
 }
 
 function FileList({ files, onRefresh, onPreview }) {
   if (!files.length) return <p className="empty">Aucun fichier. Ajoutez-en avec le bouton ci-dessus.</p>;
+  const needsScroll = files.length > 10;
   return (
-    <div className="table-wrap">
+    <div className={`table-wrap ${needsScroll ? 'scroll' : ''}`}>
       <table className="table">
         <thead>
           <tr>
+            <th className="col-index">N°</th>
             <th>Nom</th>
             <th>Type</th>
             <th>Taille</th>
@@ -232,8 +324,8 @@ function FileList({ files, onRefresh, onPreview }) {
           </tr>
         </thead>
         <tbody>
-          {files.map((f) => (
-            <FileRow key={f.id} file={f} onRefresh={onRefresh} onPreview={onPreview} />
+          {files.map((f, idx) => (
+            <FileRow key={f.id} index={idx} file={f} onRefresh={onRefresh} onPreview={onPreview} />
           ))}
         </tbody>
       </table>
@@ -251,9 +343,9 @@ function PreviewModal({ open, onClose, file, source }) {
     setTextContent('');
   }, [open]);
 
-  if (!open || !file || !source) return null;
-  const ext = (file.name || '').toLowerCase().split('.').pop();
-  const type = (file.type || '').toLowerCase();
+  // Compute safely even when file/source are not yet defined, to keep hooks order stable
+  const ext = (file?.name || '').toLowerCase().split('.').pop();
+  const type = (file?.type || '').toLowerCase();
 
   const isImage = type.startsWith('image/');
   const isPdf = type === 'application/pdf' || ext === 'pdf';
@@ -304,6 +396,9 @@ function PreviewModal({ open, onClose, file, source }) {
     })();
   }, [open, isText, isDocx, isXlsx, source]);
 
+  // Only after all hooks are declared, guard rendering
+  if (!open || !file || !source) return null;
+
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={(e)=>e.stopPropagation()}>
@@ -349,8 +444,8 @@ function Sidebar({ current, go }) {
   return (
     <aside className="sidebar">
       <nav>
-        <button className={current==='dashboard'?'active':''} onClick={()=>go('dashboard')}><span style={{display:'inline-flex',alignItems:'center',gap:8}}><DashboardIcon /> Tableau de bord</span></button>
         <button className={current==='files'?'active':''} onClick={()=>go('files')}><span style={{display:'inline-flex',alignItems:'center',gap:8}}><FolderIcon /> Fichiers</span></button>
+        <button className={current==='folders'?'active':''} onClick={()=>go('folders')}><span style={{display:'inline-flex',alignItems:'center',gap:8}}><FolderIcon /> Dossiers</span></button>
         <button className={current==='settings'?'active':''} onClick={()=>go('settings')}><span style={{display:'inline-flex',alignItems:'center',gap:8}}><SettingsGearIcon /> Paramètres</span></button>
       </nav>
     </aside>
@@ -384,33 +479,40 @@ function Settings({ authed, setAuthed, onExport, onImport, pin, setPin }) {
   }
 
   return (
-    <div className="settings-grid">
-      <div className="card">
-        <h3>Base de données</h3>
-        <div className="actions-row">
-          <button onClick={onExport}>Exporter DB</button>
-          <label className="uploader" title="Importer DB">
-            <input type="file" accept=".sqlite,.db,application/x-sqlite3" style={{ display: 'none' }} onChange={onImport} />
-            <span>Importer DB</span>
-          </label>
+    <>
+      <div className="settings-grid">
+        <div className="card">
+          <h3>Base de données</h3>
+          <div className="actions-row">
+            <button onClick={onExport}>Exporter DB</button>
+            <label className="uploader" title="Importer DB">
+              <input type="file" accept=".sqlite,.db,application/x-sqlite3" style={{ display: 'none' }} onChange={onImport} />
+              <span>Importer DB</span>
+            </label>
+          </div>
+        </div>
+        <div className="card">
+          <h3>Sécurité</h3>
+          <div className="pin-row">
+            <input type="password" placeholder="Nouveau PIN" value={newPin} onChange={(e)=>setNewPin(e.target.value)} />
+            <button onClick={()=>{
+              const np = (newPin||'').trim();
+              if (np.length < 4) { alert('PIN trop court (min 4)'); return; }
+              localStorage.setItem('app_pin', np);
+              setPin(np);
+              setNewPin('');
+              alert('PIN mis à jour');
+            }}>Mettre à jour PIN</button>
+          </div>
+          <button onClick={()=>setAuthed(false)}>Se déconnecter</button>
         </div>
       </div>
-      <div className="card">
-        <h3>Sécurité</h3>
-        <div className="pin-row">
-          <input type="password" placeholder="Nouveau PIN" value={newPin} onChange={(e)=>setNewPin(e.target.value)} />
-          <button onClick={()=>{
-            const np = (newPin||'').trim();
-            if (np.length < 4) { alert('PIN trop court (min 4)'); return; }
-            localStorage.setItem('app_pin', np);
-            setPin(np);
-            setNewPin('');
-            alert('PIN mis à jour');
-          }}>Mettre à jour PIN</button>
-        </div>
-        <button onClick={()=>setAuthed(false)}>Se déconnecter</button>
+
+      {/* Tableau de bord inclus et protégé (visible uniquement après authentification) */}
+      <div style={{ marginTop: '1rem' }}>
+        <DashboardPage />
       </div>
-    </div>
+    </>
   );
 }
 
@@ -420,19 +522,74 @@ function FilesPage() {
   const [preview, setPreview] = useState({ open: false, file: null, source: null });
 
   const refresh = async () => {
-    const list = await apiListFiles();
+  const list = await apiListFiles();
     setAll(list.map(({ id, name, type, size, createdAt }) => ({ id, name, type, size: size || 0, createdAt: createdAt || Date.now() })));
   };
   useEffect(() => { refresh(); }, []);
 
+  // Today window
+  const startOfToday = useMemo(() => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  }, []);
+  const endOfToday = startOfToday + 24 * 60 * 60 * 1000;
+
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase();
-    if (!s) return all;
+    if (!s) {
+      // By default show only files added today
+      return all.filter(f => {
+        const t = new Date(f.createdAt).getTime();
+        return t >= startOfToday && t < endOfToday;
+      });
+    }
+    // When searching, search across all files
     return all.filter(f =>
       (f.name?.toLowerCase()?.includes(s)) ||
       (f.type?.toLowerCase()?.includes(s))
     );
-  }, [q, all]);
+  }, [q, all, startOfToday, endOfToday]);
+
+  // Storage usage (circular progress)
+  const totalBytes = useMemo(() => all.reduce((acc, f) => acc + (f.size || 0), 0), [all]);
+  const quotaMb = (() => {
+    const raw = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_STORAGE_QUOTA_MB) || '';
+    const n = parseFloat(raw);
+    return Number.isFinite(n) && n > 0 ? n : 1024; // default 1024 MB
+  })();
+  const quotaBytes = quotaMb * 1024 * 1024;
+  const quotaGbStr = (() => {
+    const gb = quotaMb / 1024;
+    if (!isFinite(gb) || gb <= 0) return '1 Go';
+    // Format: 2 décimales sous 10 Go, entier au-delà
+    return gb >= 10 ? `${gb.toFixed(0)} Go` : `${gb.toFixed(2)} Go`;
+  })();
+  const pct = Math.max(0, Math.min(100, quotaBytes > 0 ? (totalBytes / quotaBytes) * 100 : 0));
+
+  const bytesToHuman = (bytes) => {
+    if (bytes < 1024) return `${bytes} B`;
+    const kb = bytes / 1024;
+    if (kb < 1024) return `${kb.toFixed(2)} KB`;
+    const mb = kb / 1024;
+    if (mb < 1024) return `${mb.toFixed(2)} MB`;
+    const gb = mb / 1024;
+    return `${gb.toFixed(2)} GB`;
+  };
+
+  const CircularProgress = ({ size = 40, stroke = 6, value = 0 }) => {
+    const r = (size - stroke) / 2;
+    const c = 2 * Math.PI * r;
+    const off = c - (Math.max(0, Math.min(100, value)) / 100) * c;
+    // color by threshold
+    const color = value >= 90 ? '#e53935' : value >= 70 ? '#fb8c00' : '#1e88e5';
+    return (
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="cprog" aria-label={`Utilisation ${value.toFixed(0)}%`}>
+        <circle cx={size/2} cy={size/2} r={r} fill="none" stroke="#e6eef7" strokeWidth={stroke} />
+        <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={color} strokeWidth={stroke} strokeDasharray={c} strokeDashoffset={off} strokeLinecap="round" transform={`rotate(-90 ${size/2} ${size/2})`} />
+        <text x="50%" y="50%" textAnchor="middle" dominantBaseline="central" fontSize={size*0.32} fill="#213547">{Math.round(value)}%</text>
+      </svg>
+    );
+  };
 
   return (
     <div className="container">
@@ -440,7 +597,15 @@ function FilesPage() {
       <div className="toolbar">
         <FileUploader onAdded={refresh} />
         <SearchBar query={q} setQuery={setQ} />
+        <div className="storage-widget" title={`Stockage: ${bytesToHuman(totalBytes)} / ${quotaGbStr}`}>
+          <CircularProgress value={pct} />
+          <div className="storage-text">
+            <div className="label">Stockage</div>
+            <div className="value">{bytesToHuman(totalBytes)} / {quotaGbStr}</div>
+          </div>
+        </div>
       </div>
+      <div className="muted" style={{marginBottom:'0.5rem', fontSize:12}}>Affichage: fichiers ajoutés aujourd'hui. Utilisez la recherche pour retrouver les autres.</div>
       <FileList files={filtered} onRefresh={refresh} onPreview={async (file) => {
         try {
           const blob = await apiGetFileBlob(file.id);
@@ -454,6 +619,122 @@ function FilesPage() {
         if (preview.source?.url) URL.revokeObjectURL(preview.source.url);
         setPreview({ open: false, file: null, source: null });
       }} />
+    </div>
+  );
+}
+
+function FoldersPage() {
+  const [folders, setFolders] = useState([]);
+  const [current, setCurrent] = useState(null); // current folderId
+  const [all, setAll] = useState([]);
+  const [newName, setNewName] = useState('');
+  const [createOpen, setCreateOpen] = useState(false);
+  const [path, setPath] = useState([]); // breadcrumb: array of {id,name}
+
+  const refreshFolders = async () => {
+    const fs = await apiListFolders();
+    setFolders(fs);
+    // Ensure breadcrumb is consistent
+    if (current == null) setPath([]);
+  };
+  const refreshFiles = async () => {
+    const list = await apiListFiles(current != null ? current : undefined);
+    const scoped = current == null ? list.filter(f => (f.folderId ?? null) === null) : list;
+    setAll(scoped.map(({ id, name, type, size, createdAt }) => ({ id, name, type, size: size || 0, createdAt: createdAt || Date.now() })));
+  };
+  useEffect(() => { refreshFolders(); }, []);
+  useEffect(() => { refreshFiles(); }, [current]);
+
+  const createFolder = async () => {
+    const n = newName.trim();
+    if (!n) return;
+    // create under current folder
+    const parentId = current ?? null;
+    await apiCreateFolder(n, parentId);
+    setNewName('');
+    setCreateOpen(false);
+    await refreshFolders();
+    // Stay in the same folder and show new list
+    await refreshFiles();
+  };
+
+  // Compute child folders of the current folder
+  const childFolders = (folders || []).filter(f => (f.parentId ?? null) === (current ?? null));
+
+  const goTo = (folder) => {
+    const id = folder?.id ?? null;
+    setCurrent(id);
+    if (id == null) {
+      setPath([]);
+    } else {
+      // rebuild breadcrumb from root
+      const chain = [];
+      let cur = folder;
+      while (cur) {
+        chain.unshift({ id: cur.id, name: cur.name });
+        cur = folders.find(x => x.id === cur.parentId);
+      }
+      setPath(chain);
+    }
+  };
+
+  return (
+    <div className="container">
+      <h2 className="title">Dossiers</h2>
+      <div className="toolbar" style={{ gap: 8, flexWrap: 'wrap' }}>
+        <button onClick={()=>setCreateOpen(true)}>Nouveau dossier</button>
+        <div className="breadcrumb" style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+          <button className="icon-btn" onClick={()=>goTo(null)} title="Racine">🏠</button>
+          {path.map((p, i) => (
+            <span key={p.id} style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+              <span>/</span>
+              <button className="icon-btn" onClick={()=>goTo(folders.find(f=>f.id===p.id))}>{p.name}</button>
+            </span>
+          ))}
+        </div>
+        <div style={{ marginLeft: 'auto', opacity: 0.7 }}>Dossier courant: {folders.find(f=>f.id===current)?.name || 'Racine'}</div>
+      </div>
+
+      {/* Grille des sous-dossiers */}
+      <div className="folder-grid">
+        {childFolders.length === 0 && (<div className="muted">Aucun sous-dossier.</div>)}
+        {childFolders.map(fd => (
+          <div key={fd.id} className="folder-card" onDoubleClick={()=>goTo(fd)} title="Ouvrir">
+            <div className="folder-icon">📁</div>
+            <div className="folder-name" title={fd.name}>{fd.name}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Fichiers du dossier courant */}
+      <h3 style={{ marginTop: '1rem' }}>Fichiers</h3>
+      <FileList files={all} onRefresh={refreshFiles} onPreview={async (file) => {
+        try {
+          const blob = await apiGetFileBlob(file.id);
+          const url = URL.createObjectURL(blob);
+          // Reuse PreviewModal of FilesPage by opening a new modal? For now, simple download to keep page small.
+          const a = document.createElement('a'); a.href = url; a.download = file.name; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+        } catch (e) { alert('Impossible d\'ouvrir: ' + (e?.message || e)); }
+      }} />
+
+      {createOpen && (
+        <div className="modal-overlay" onClick={()=>setCreateOpen(false)}>
+          <div className="modal" onClick={(e)=>e.stopPropagation()}>
+            <div className="modal-header">
+              <strong>Nouveau dossier</strong>
+              <button className="icon-btn" onClick={()=>setCreateOpen(false)}>✖️</button>
+            </div>
+            <div className="modal-body">
+              <label>Nom du dossier</label>
+              <input value={newName} onChange={(e)=>setNewName(e.target.value)} onKeyDown={(e)=>{ if (e.key==='Enter') createFolder(); }} autoFocus />
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
+                <button onClick={()=>setCreateOpen(false)}>Annuler</button>
+                <button onClick={createFolder}>Créer</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -561,7 +842,7 @@ function DashboardPage() {
 }
 
 export default function App() {
-  const [view, setView] = useState('dashboard'); // 'dashboard' | 'files' | 'settings'
+  const [view, setView] = useState('files'); // 'files' | 'folders' | 'settings'
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [authed, setAuthed] = useState(false);
   const defaultPin = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_DEFAULT_PIN) || 'Gilles29@';
@@ -607,8 +888,8 @@ export default function App() {
       <div className="body">
         <Sidebar current={view} go={go} />
         <main className="content">
-          {view === 'dashboard' && <DashboardPage />}
           {view === 'files' && <FilesPage />}
+          {view === 'folders' && <FoldersPage />}
           {view === 'settings' && (
             <Settings authed={authed} setAuthed={setAuthed} onExport={handleExport} onImport={handleImport} pin={pin} setPin={setPin} />
           )}

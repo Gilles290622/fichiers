@@ -154,3 +154,44 @@ export const SettingsGearIcon = (props) => (
     </svg>
   </Icon>
 );
+
+// Additional action icons for menus
+export const EyeIcon = (props) => (
+  <Icon {...props}>
+    <svg viewBox="0 0 24 24" width="100%" height="100%" fill="currentColor" aria-hidden>
+      <path d="M12 5c-5 0-9 4.5-9 7s4 7 9 7 9-4.5 9-7-4-7-9-7Zm0 12c-3.3 0-6-2.7-6-5s2.7-5 6-5 6 2.7 6 5-2.7 5-6 5Zm0-8a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z"/>
+    </svg>
+  </Icon>
+);
+
+export const PencilIcon = (props) => (
+  <Icon {...props}>
+    <svg viewBox="0 0 24 24" width="100%" height="100%" fill="currentColor" aria-hidden>
+      <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25Zm18-11.5a1 1 0 0 0 0-1.41l-1.59-1.59a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75L21 5.75Z"/>
+    </svg>
+  </Icon>
+);
+
+export const SaveIcon = (props) => (
+  <Icon {...props}>
+    <svg viewBox="0 0 24 24" width="100%" height="100%" fill="currentColor" aria-hidden>
+      <path d="M17 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7l-4-4Zm-4 16a3 3 0 1 1 0-6 3 3 0 0 1 0 6ZM6 5h8v4H6V5Z"/>
+    </svg>
+  </Icon>
+);
+
+export const CancelIcon = (props) => (
+  <Icon {...props}>
+    <svg viewBox="0 0 24 24" width="100%" height="100%" fill="currentColor" aria-hidden>
+      <path d="M12 2a10 10 0 1 0 .001 20.001A10 10 0 0 0 12 2Zm4.2 13.8a1 1 0 0 1-1.4 1.4L12 13.4l-2.8 2.8a1 1 0 1 1-1.4-1.4L10.6 12 7.8 9.2a1 1 0 1 1 1.4-1.4L12 10.6l2.8-2.8a1 1 0 1 1 1.4 1.4L13.4 12l2.8 2.8Z"/>
+    </svg>
+  </Icon>
+);
+
+export const TrashIcon = (props) => (
+  <Icon {...props}>
+    <svg viewBox="0 0 24 24" width="100%" height="100%" fill="currentColor" aria-hidden>
+      <path d="M7 6h10l-1 14a2 2 0 0 1-2 2H10a2 2 0 0 1-2-2L7 6Zm4-3h2a2 2 0 0 1 2 2h3v2H6V5h3a2 2 0 0 1 2-2Z"/>
+    </svg>
+  </Icon>
+);

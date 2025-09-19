@@ -16,8 +16,9 @@ function toBase64(file) {
   });
 }
 
-export async function apiListFiles() {
-  const r = await fetch(`${BASE}/api/files`);
+export async function apiListFiles(folderId) {
+  const q = folderId != null ? `?folderId=${encodeURIComponent(folderId)}` : '';
+  const r = await fetch(`${BASE}/api/files${q}`);
   if (!r.ok) throw new Error('API error');
   return r.json();
 }
@@ -41,15 +42,73 @@ export async function apiUploadFile(file) {
   return r.json();
 }
 
-export async function apiUploadFiles(files) {
+export async function apiUploadFiles(files, folderId) {
   const form = new FormData();
   for (const f of files) form.append('files', f);
+  if (folderId != null) form.append('folderId', String(folderId));
   const r = await fetch(`${BASE}/api/files/multi`, {
     method: 'POST',
     body: form,
   });
   if (!r.ok) throw new Error('Multi upload failed');
   return r.json();
+}
+
+// Progress-enabled uploads using XHR
+function xhrRequest({ url, method = 'POST', body, headers = {}, onProgress }) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open(method, url, true);
+    Object.entries(headers).forEach(([k, v]) => xhr.setRequestHeader(k, v));
+    xhr.upload.onprogress = (evt) => {
+      if (onProgress && evt.lengthComputable) {
+        const pct = evt.total > 0 ? (evt.loaded / evt.total) * 100 : 0;
+        onProgress({ loaded: evt.loaded, total: evt.total, percent: pct });
+      } else if (onProgress) {
+        onProgress({ loaded: evt.loaded || 0, total: evt.total || 0, percent: 0 });
+      }
+    };
+    xhr.onreadystatechange = () => {
+      if (xhr.readyState !== 4) return;
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          const json = xhr.responseText ? JSON.parse(xhr.responseText) : null;
+          if (onProgress) onProgress({ loaded: 1, total: 1, percent: 100 });
+          resolve(json);
+        } catch (e) {
+          resolve(null);
+        }
+      } else {
+        reject(new Error(`HTTP ${xhr.status}`));
+      }
+    };
+    xhr.onerror = () => reject(new Error('Network error'));
+    xhr.send(body);
+  });
+}
+
+export async function apiUploadFileWithProgress(file, onProgress, folderId) {
+  const data = await toBase64(file);
+  const payload = JSON.stringify({ name: file.name, type: file.type, data, folderId });
+  return xhrRequest({
+    url: `${BASE}/api/files`,
+    method: 'POST',
+    body: payload,
+    headers: { 'Content-Type': 'application/json' },
+    onProgress,
+  });
+}
+
+export async function apiUploadFilesWithProgress(files, onProgress, folderId) {
+  const form = new FormData();
+  for (const f of files) form.append('files', f);
+  if (folderId != null) form.append('folderId', String(folderId));
+  return xhrRequest({
+    url: `${BASE}/api/files/multi`,
+    method: 'POST',
+    body: form,
+    onProgress,
+  });
 }
 
 export async function apiRenameFile(id, name) {
@@ -73,4 +132,41 @@ export async function apiExportDatabase() {
   if (!r.ok) throw new Error('Export failed');
   const blob = await r.blob();
   return blob;
+}
+
+// Folders API
+export async function apiListFolders() {
+  const r = await fetch(`${BASE}/api/folders`);
+  if (!r.ok) throw new Error('API error');
+  return r.json();
+}
+
+export async function apiCreateFolder(name, parentId = null) {
+  const r = await fetch(`${BASE}/api/folders`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, parentId })
+  });
+  if (!r.ok) throw new Error('Create folder failed');
+  return r.json();
+}
+
+export async function apiMoveFile(id, folderId) {
+  const r = await fetch(`${BASE}/api/files/${id}/move`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ folderId })
+  });
+  if (!r.ok) throw new Error('Move failed');
+  return r.json();
+}
+
+export async function apiMoveFiles(ids, folderId) {
+  const r = await fetch(`${BASE}/api/files/move-bulk`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids, folderId })
+  });
+  if (!r.ok) throw new Error('Move bulk failed');
+  return r.json();
 }

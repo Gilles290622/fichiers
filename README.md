@@ -21,7 +21,7 @@ npm install
 cd .\backend; npm install; cd ..
 ```
 
-2) Lancer le backend (Express + SQLite) sur 3002:
+2) Lancer le backend (Express + SQLite) sur 3001:
 
 ```powershell
 npm run start --prefix .\backend
@@ -35,7 +35,7 @@ npm run dev
 
 Notes dev:
 - Sur Windows, écouter sur le port 80 peut nécessiter d’exécuter le terminal en Administrateur. Sinon, changez le port dans `vite.config.js` (ex: 5175) et ouvrez l’URL affichée.
-- Un proxy de dev redirige `/api` vers le backend (variable `.env` VITE_API_PROXY, par défaut http://localhost:3002).
+- Un proxy de dev redirige `/api` vers le backend (variable `.env` VITE_API_PROXY, par défaut http://localhost:3001).
 - Pour un nom d’hôte personnalisé (`http://fichiers`), ajoutez une entrée dans `C:\Windows\System32\drivers\etc\hosts`: `127.0.0.1   fichiers`.
 
 ## Build production
