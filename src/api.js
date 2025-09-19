@@ -141,13 +141,22 @@ export async function apiListFolders() {
   return r.json();
 }
 
-export async function apiCreateFolder(name, parentId = null) {
+export async function apiCreateFolder(name, parentId = null, isProtected = false) {
   const r = await fetch(`${BASE}/api/folders`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, parentId })
+    body: JSON.stringify({ name, parentId, protected: !!isProtected })
   });
-  if (!r.ok) throw new Error('Create folder failed');
+  if (!r.ok) {
+    let msg = 'Create folder failed';
+    try {
+      const data = await r.json();
+      if (data?.error) msg += `: ${data.error}`;
+    } catch {
+      try { msg += ` (HTTP ${r.status}) - ` + (await r.text()); } catch {}
+    }
+    throw new Error(msg);
+  }
   return r.json();
 }
 
@@ -168,5 +177,46 @@ export async function apiMoveFiles(ids, folderId) {
     body: JSON.stringify({ ids, folderId })
   });
   if (!r.ok) throw new Error('Move bulk failed');
+  return r.json();
+}
+
+// Folder operations
+export async function apiRenameFolder(id, name) {
+  const r = await fetch(`${BASE}/api/folders/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name })
+  });
+  if (!r.ok) throw new Error('Rename folder failed');
+  return r.json();
+}
+
+export async function apiSetFolderProtected(id, isProtected) {
+  const r = await fetch(`${BASE}/api/folders/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ protected: !!isProtected })
+  });
+  if (!r.ok) throw new Error('Protect toggle failed');
+  return r.json();
+}
+
+export async function apiDeleteFolder(id) {
+  const r = await fetch(`${BASE}/api/folders/${id}`, { method: 'DELETE' });
+  if (!r.ok) {
+    try {
+      const data = await r.json();
+      const err = data?.error ? `: ${data.error}` : '';
+      const e = new Error(`Delete folder failed (HTTP ${r.status})${err}`);
+      e.status = r.status;
+      throw e;
+    } catch {
+      let text = '';
+      try { text = await r.text(); } catch {}
+      const e = new Error(`Delete folder failed (HTTP ${r.status})${text ? ' - ' + text : ''}`);
+      e.status = r.status;
+      throw e;
+    }
+  }
   return r.json();
 }

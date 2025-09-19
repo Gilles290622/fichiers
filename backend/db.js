@@ -8,6 +8,9 @@ const db = new sqlite3.Database(DB_PATH);
 // Init schema
 const init = () => {
   db.serialize(() => {
+    // Pragmas for better reliability
+    db.run('PRAGMA foreign_keys = ON');
+    db.run('PRAGMA busy_timeout = 3000');
     db.run(`CREATE TABLE IF NOT EXISTS files (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT,
@@ -23,7 +26,8 @@ const init = () => {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT,
       createdAt INTEGER,
-      parentId INTEGER
+      parentId INTEGER,
+      protected INTEGER DEFAULT 0
     )`);
     // Add missing columns if upgrading existing DB (ignore errors if already exist)
   db.run('ALTER TABLE files ADD COLUMN size INTEGER', () => {});
@@ -31,6 +35,7 @@ const init = () => {
   db.run('ALTER TABLE files ADD COLUMN filepath TEXT', () => {});
   db.run('ALTER TABLE files ADD COLUMN folderId INTEGER', () => {});
   db.run('ALTER TABLE folders ADD COLUMN parentId INTEGER', () => {});
+  db.run('ALTER TABLE folders ADD COLUMN protected INTEGER DEFAULT 0', () => {});
   });
 };
 

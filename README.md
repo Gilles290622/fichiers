@@ -6,6 +6,7 @@ Application web de gestion de fichiers avec:
 - Liste avec prévisualisation, téléchargement, renommage, suppression
 - Partage via WhatsApp/Email (liens)
 - Recherche par nom/type
+- Dossiers: création, renommage, suppression (récursive), protection par PIN
 - Thème bleu/blanc, responsive mobile → bureau
 - Tableau de bord (KPIs, tendance 7j, récents)
 - Page Paramètres protégée par PIN (export DB serveur)
@@ -74,6 +75,7 @@ Utilisation: dans la page Fichiers, menu Actions → Ouvrir.
 ## Sécurité
 
 - Accès Paramètres protégé par PIN (modifiable). Par défaut, initialisé depuis `VITE_DEFAULT_PIN`.
+- Dossiers protégés: vous pouvez protéger un dossier (icône 🔒). L'ouverture d'un dossier protégé demande le PIN. Le déverrouillage est mémorisé uniquement pour la session du navigateur (effacé à la fermeture de l'onglet).
 
 ## Prochaines pistes
 

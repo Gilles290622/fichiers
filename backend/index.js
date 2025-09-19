@@ -33,7 +33,7 @@ const upload = multer({ storage, limits: { fileSize: Math.max(1, MAX_UPLOAD_MB) 
 
 // Liste des dossiers
 app.get('/api/folders', (req, res) => {
-  db.all('SELECT id, name, createdAt, parentId FROM folders ORDER BY createdAt DESC', [], (err, rows) => {
+  db.all('SELECT id, name, createdAt, parentId, protected FROM folders ORDER BY createdAt DESC', [], (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json(rows);
   });
@@ -41,13 +41,97 @@ app.get('/api/folders', (req, res) => {
 
 // Créer un dossier
 app.post('/api/folders', (req, res) => {
-  const { name, parentId } = req.body || {};
+  const { name, parentId, protected: prot } = req.body || {};
   const n = (name || '').trim();
   if (!n) return res.status(400).json({ error: 'Missing name' });
   const createdAt = Date.now();
-  db.run('INSERT INTO folders (name, createdAt, parentId) VALUES (?, ?, ?)', [n, createdAt, parentId || null], function(err) {
+  const protectedVal = prot ? 1 : 0;
+  db.run('INSERT INTO folders (name, createdAt, parentId, protected) VALUES (?, ?, ?, ?)', [n, createdAt, parentId || null, protectedVal], function(err) {
     if (err) return res.status(500).json({ error: err.message });
-    res.json({ id: this.lastID, name: n, parentId: parentId || null, createdAt });
+    res.json({ id: this.lastID, name: n, parentId: parentId || null, createdAt, protected: !!protectedVal });
+  });
+});
+
+// Renommer/toggle protection d'un dossier
+app.patch('/api/folders/:id', (req, res) => {
+  const id = Number(req.params.id);
+  const { name, protected: prot } = req.body || {};
+  if (name == null && prot == null) return res.status(400).json({ error: 'Nothing to update' });
+  const fields = [];
+  const params = [];
+  if (name != null) { fields.push('name = ?'); params.push(String(name)); }
+  if (prot != null) { fields.push('protected = ?'); params.push(prot ? 1 : 0); }
+  params.push(id);
+  db.run(`UPDATE folders SET ${fields.join(', ')} WHERE id = ?`, params, function(err) {
+    if (err) return res.status(500).json({ error: err.message });
+    if (this.changes === 0) return res.status(404).json({ error: 'Not found' });
+    res.json({ ok: true });
+  });
+});
+
+// Suppression récursive d'un dossier (sous-dossiers + fichiers)
+function deleteFolderRecursive(folderId, cb) {
+  // 1) Supprimer fichiers du dossier
+  db.all('SELECT id, filepath FROM files WHERE folderId = ?', [folderId], (err, files) => {
+    if (err) return cb(err);
+    const removeFile = (file, done) => {
+      if (file.filepath) {
+        try { fs.unlinkSync(file.filepath); } catch {}
+      }
+      db.run('DELETE FROM files WHERE id = ?', [file.id], () => done());
+    };
+    let i = 0;
+    const nextFile = () => {
+      if (!files || i >= files.length) return afterFiles();
+      const f = files[i++];
+      removeFile(f, nextFile);
+    };
+    const afterFiles = () => {
+      // 2) Traiter sous-dossiers
+      db.all('SELECT id FROM folders WHERE parentId = ?', [folderId], (e2, subs) => {
+        if (e2) return cb(e2);
+        let j = 0;
+        const nextFolder = () => {
+          if (!subs || j >= subs.length) return afterFolders();
+          const sub = subs[j++];
+          deleteFolderRecursive(sub.id, (e3) => {
+            if (e3) return cb(e3);
+            nextFolder();
+          });
+        };
+        const afterFolders = () => {
+          // 3) Enfin supprimer le dossier lui-même
+          db.run('DELETE FROM folders WHERE id = ?', [folderId], (e4) => cb(e4));
+        };
+        nextFolder();
+      });
+    };
+    nextFile();
+  });
+}
+
+app.delete('/api/folders/:id', (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid id' });
+  db.get('SELECT id FROM folders WHERE id = ?', [id], (err, row) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!row) return res.status(404).json({ error: 'Folder not found' });
+    // Begin transaction
+    db.serialize(() => {
+      db.run('BEGIN IMMEDIATE', (e1) => {
+        if (e1) return res.status(500).json({ error: e1.message });
+        deleteFolderRecursive(id, (eDel) => {
+          if (eDel) {
+            db.run('ROLLBACK', () => res.status(500).json({ error: eDel.message }));
+          } else {
+            db.run('COMMIT', (e2) => {
+              if (e2) return res.status(500).json({ error: e2.message });
+              res.json({ ok: true });
+            });
+          }
+        });
+      });
+    });
   });
 });
 

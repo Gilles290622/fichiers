@@ -1,5 +1,5 @@
 // Remplace les appels locale DB par l'API backend
-import { apiListFiles, apiGetFileBlob, apiUploadFile, apiDeleteFile, apiRenameFile, apiUploadFiles, apiExportDatabase, apiUploadFileWithProgress, apiUploadFilesWithProgress, apiListFolders, apiCreateFolder, apiMoveFile, apiMoveFiles } from './api'
+import { apiListFiles, apiGetFileBlob, apiUploadFile, apiDeleteFile, apiRenameFile, apiUploadFiles, apiExportDatabase, apiUploadFileWithProgress, apiUploadFilesWithProgress, apiListFolders, apiCreateFolder, apiMoveFile, apiMoveFiles, apiRenameFolder, apiDeleteFolder, apiSetFolderProtected } from './api'
 import './App.css'
 
 import { useEffect, useMemo, useState } from 'react'
@@ -220,7 +220,7 @@ function FileRow({ index, file, onRefresh, onPreview }) {
       <td>
         {editing ? (
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, maxWidth: '100%' }}>
-            <input
+            <input className="text-input sm"
               value={name}
               onChange={(e)=>setName(e.target.value)}
               onKeyDown={(e)=>{
@@ -468,7 +468,7 @@ function Settings({ authed, setAuthed, onExport, onImport, pin, setPin }) {
         <h3>Authentification requise</h3>
         <p>Entrez votre code PIN pour accéder aux paramètres.</p>
         <div className="pin-row">
-          <input type="password" placeholder="Code PIN" value={inputPin} onChange={(e)=>setInputPin(e.target.value)} />
+          <input className="text-input pin" type="password" placeholder="Code PIN" value={inputPin} onChange={(e)=>setInputPin(e.target.value)} />
           <button onClick={()=>{
             const saved = localStorage.getItem('app_pin') || pin;
             if (inputPin === saved) setAuthed(true); else alert('PIN incorrect');
@@ -494,7 +494,7 @@ function Settings({ authed, setAuthed, onExport, onImport, pin, setPin }) {
         <div className="card">
           <h3>Sécurité</h3>
           <div className="pin-row">
-            <input type="password" placeholder="Nouveau PIN" value={newPin} onChange={(e)=>setNewPin(e.target.value)} />
+            <input className="text-input pin" type="password" placeholder="Nouveau PIN" value={newPin} onChange={(e)=>setNewPin(e.target.value)} />
             <button onClick={()=>{
               const np = (newPin||'').trim();
               if (np.length < 4) { alert('PIN trop court (min 4)'); return; }
@@ -629,7 +629,16 @@ function FoldersPage() {
   const [all, setAll] = useState([]);
   const [newName, setNewName] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
+  const [createProtected, setCreateProtected] = useState(false);
   const [path, setPath] = useState([]); // breadcrumb: array of {id,name}
+  const [renameTarget, setRenameTarget] = useState(null); // folder object
+  const [renameValue, setRenameValue] = useState('');
+  const [confirmDelete, setConfirmDelete] = useState(null); // folder object
+  const [pinPrompt, setPinPrompt] = useState({ open: false, folder: null, value: '' });
+  const [unlocked, setUnlocked] = useState(()=>{
+    try { return JSON.parse(sessionStorage.getItem('unlocked_folders')||'[]'); } catch { return []; }
+  });
+  const [menuOpenId, setMenuOpenId] = useState(null);
 
   const refreshFolders = async () => {
     const fs = await apiListFolders();
@@ -650,8 +659,14 @@ function FoldersPage() {
     if (!n) return;
     // create under current folder
     const parentId = current ?? null;
-    await apiCreateFolder(n, parentId);
+    try {
+      await apiCreateFolder(n, parentId, createProtected);
+    } catch (e) {
+      alert(e?.message || 'Erreur lors de la création du dossier');
+      return;
+    }
     setNewName('');
+    setCreateProtected(false);
     setCreateOpen(false);
     await refreshFolders();
     // Stay in the same folder and show new list
@@ -663,6 +678,15 @@ function FoldersPage() {
 
   const goTo = (folder) => {
     const id = folder?.id ?? null;
+    if (id != null) {
+      const fd = folders.find(f=>f.id===id);
+      const isProt = !!fd?.protected;
+      const isUnlocked = unlocked.includes(id);
+      if (isProt && !isUnlocked) {
+        setPinPrompt({ open: true, folder: fd, value: '' });
+        return;
+      }
+    }
     setCurrent(id);
     if (id == null) {
       setPath([]);
@@ -675,6 +699,59 @@ function FoldersPage() {
         cur = folders.find(x => x.id === cur.parentId);
       }
       setPath(chain);
+    }
+  };
+
+  const onConfirmPin = () => {
+    const fd = pinPrompt.folder;
+    const savedPin = localStorage.getItem('app_pin') || 'Gilles29@';
+    if ((pinPrompt.value||'') === savedPin) {
+      const next = [...unlocked, fd.id];
+      setUnlocked(next);
+      sessionStorage.setItem('unlocked_folders', JSON.stringify(next));
+      setPinPrompt({ open: false, folder: null, value: '' });
+      setCurrent(fd.id);
+      // rebuild path
+      const chain = [];
+      let cur = fd;
+      while (cur) { chain.unshift({ id: cur.id, name: cur.name }); cur = folders.find(x => x.id === cur.parentId); }
+      setPath(chain);
+    } else {
+      alert('PIN incorrect');
+    }
+  };
+
+  const toggleProtect = async (fd) => {
+    const nextVal = !fd.protected;
+    await apiSetFolderProtected(fd.id, nextVal);
+    await refreshFolders();
+  };
+
+  const askRename = (fd) => { setRenameTarget(fd); setRenameValue(fd.name); };
+  const doRename = async () => {
+    const n = renameValue.trim(); if (!n) return;
+    await apiRenameFolder(renameTarget.id, n);
+    setRenameTarget(null); setRenameValue('');
+    await refreshFolders();
+  };
+
+  const doDelete = async () => {
+    if (!confirmDelete) return;
+    try {
+      await apiDeleteFolder(confirmDelete.id);
+      setConfirmDelete(null);
+      await refreshFolders();
+      await refreshFiles();
+    } catch (e) {
+      // Si le serveur renvoie 404, le dossier n'existe plus (déjà supprimé). On rafraîchit l'UI et on informe doucement.
+      if (e && (e.status === 404)) {
+        setConfirmDelete(null);
+        await refreshFolders();
+        await refreshFiles();
+        alert('Ce dossier n’existe plus (il a peut-être déjà été supprimé). La liste a été actualisée.');
+      } else {
+        alert(e?.message || 'Erreur lors de la suppression du dossier');
+      }
     }
   };
 
@@ -699,9 +776,30 @@ function FoldersPage() {
       <div className="folder-grid">
         {childFolders.length === 0 && (<div className="muted">Aucun sous-dossier.</div>)}
         {childFolders.map(fd => (
-          <div key={fd.id} className="folder-card" onDoubleClick={()=>goTo(fd)} title="Ouvrir">
-            <div className="folder-icon">📁</div>
-            <div className="folder-name" title={fd.name}>{fd.name}</div>
+          <div key={fd.id} className="folder-card" title="Ouvrir" style={{ position:'relative' }}>
+            <div className="folder-icon" onDoubleClick={()=>goTo(fd)}>{fd.protected ? '🔒' : '📁'}</div>
+            <div className="folder-name" title={fd.name} onDoubleClick={()=>goTo(fd)}>
+              {fd.name}
+            </div>
+            <button
+              className="icon-btn"
+              aria-label="Actions"
+              title="Actions"
+              onClick={()=>setMenuOpenId(menuOpenId===fd.id?null:fd.id)}
+              style={{ position:'absolute', top:8, right:8, padding:'0.35rem 0.45rem' }}
+            >
+              ⋮
+            </button>
+            {menuOpenId === fd.id && (
+              <div className="popover-menu" role="menu" onMouseLeave={()=>setMenuOpenId(null)} style={{ position:'absolute', top:32, right:8, zIndex:5 }}>
+                <button onClick={()=>{ goTo(fd); setMenuOpenId(null); }} role="menuitem"><span className="mi"><EyeIcon /></span> Ouvrir</button>
+                <button onClick={()=>{ toggleProtect(fd); setMenuOpenId(null); }} role="menuitem">
+                  <span className="mi"><FolderIcon /></span> {fd.protected ? 'Retirer protection' : 'Protéger'}
+                </button>
+                <button onClick={()=>{ askRename(fd); setMenuOpenId(null); }} role="menuitem"><span className="mi rename"><PencilIcon /></span> Renommer</button>
+                <button onClick={()=>{ setConfirmDelete(fd); setMenuOpenId(null); }} role="menuitem"><span className="mi danger"><TrashIcon /></span> Supprimer</button>
+              </div>
+            )}
           </div>
         ))}
       </div>
@@ -726,10 +824,70 @@ function FoldersPage() {
             </div>
             <div className="modal-body">
               <label>Nom du dossier</label>
-              <input value={newName} onChange={(e)=>setNewName(e.target.value)} onKeyDown={(e)=>{ if (e.key==='Enter') createFolder(); }} autoFocus />
+              <input className="text-input" value={newName} onChange={(e)=>setNewName(e.target.value)} onKeyDown={(e)=>{ if (e.key==='Enter') createFolder(); }} autoFocus />
+              <label style={{ display:'inline-flex', alignItems:'center', gap:8, marginTop:8 }}>
+                <input type="checkbox" checked={createProtected} onChange={(e)=>setCreateProtected(e.target.checked)} />
+                Protéger ce dossier (PIN requis)
+              </label>
               <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
                 <button onClick={()=>setCreateOpen(false)}>Annuler</button>
                 <button onClick={createFolder}>Créer</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {renameTarget && (
+        <div className="modal-overlay" onClick={()=>setRenameTarget(null)}>
+          <div className="modal" onClick={(e)=>e.stopPropagation()}>
+            <div className="modal-header">
+              <strong>Renommer le dossier</strong>
+              <button className="icon-btn" onClick={()=>setRenameTarget(null)}>✖️</button>
+            </div>
+            <div className="modal-body">
+              <label>Nouveau nom</label>
+              <input className="text-input" value={renameValue} onChange={(e)=>setRenameValue(e.target.value)} onKeyDown={(e)=>{ if (e.key==='Enter') doRename(); }} autoFocus />
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
+                <button onClick={()=>setRenameTarget(null)}>Annuler</button>
+                <button onClick={doRename}>Renommer</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmDelete && (
+        <div className="modal-overlay" onClick={()=>setConfirmDelete(null)}>
+          <div className="modal" onClick={(e)=>e.stopPropagation()}>
+            <div className="modal-header">
+              <strong>Supprimer le dossier</strong>
+              <button className="icon-btn" onClick={()=>setConfirmDelete(null)}>✖️</button>
+            </div>
+            <div className="modal-body">
+              <p>Supprimer « {confirmDelete.name} » et tout son contenu (sous-dossiers et fichiers) ? Cette action est définitive.</p>
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
+                <button onClick={()=>setConfirmDelete(null)}>Annuler</button>
+                <button style={{ background: '#e53935', color: '#fff', borderColor: '#e53935' }} onClick={doDelete}>Supprimer</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pinPrompt.open && (
+        <div className="modal-overlay" onClick={()=>setPinPrompt({ open:false, folder:null, value:'' })}>
+          <div className="modal" onClick={(e)=>e.stopPropagation()}>
+            <div className="modal-header">
+              <strong>Déverrouiller le dossier</strong>
+              <button className="icon-btn" onClick={()=>setPinPrompt({ open:false, folder:null, value:'' })}>✖️</button>
+            </div>
+            <div className="modal-body">
+              <label>Code PIN</label>
+              <input className="text-input pin" type="password" value={pinPrompt.value} onChange={(e)=>setPinPrompt(p=>({ ...p, value: e.target.value }))} onKeyDown={(e)=>{ if (e.key==='Enter') onConfirmPin(); }} autoFocus />
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
+                <button onClick={()=>setPinPrompt({ open:false, folder:null, value:'' })}>Annuler</button>
+                <button onClick={onConfirmPin}>Déverrouiller</button>
               </div>
             </div>
           </div>
