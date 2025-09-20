@@ -1,9 +1,9 @@
 // Remplace les appels locale DB par l'API backend
-import { apiListFiles, apiGetFileBlob, apiUploadFile, apiDeleteFile, apiRenameFile, apiUploadFiles, apiExportDatabase, apiUploadFileWithProgress, apiUploadFilesWithProgress, apiListFolders, apiCreateFolder, apiMoveFile, apiMoveFiles, apiRenameFolder, apiDeleteFolder, apiSetFolderProtected } from './api'
+import { apiListFiles, apiGetFileBlob, apiUploadFile, apiDeleteFile, apiRenameFile, apiUploadFiles, apiExportDatabase, apiUploadFileWithProgress, apiUploadFilesWithProgress, apiListFolders, apiCreateFolder, apiMoveFile, apiMoveFiles, apiRenameFolder, apiDeleteFolder, apiSetFolderProtected, apiUpdateFolder, apiLogin, apiListUsers, apiCreateUser, apiUpdateUser, apiDeleteUser, apiChangePassword, setAuthToken, apiGetSubscription, apiExtendSubscription, apiCreateSubscriptionCheckout } from './api'
 import './App.css'
 
 import { useEffect, useMemo, useState } from 'react'
-import { EmailIcon, PsdIcon, ImageIcon, VideoIcon, AudioIcon, ArchiveIcon, TextIcon, DefaultFileIcon, DownloadIcon, UploadIcon, InfoIcon, FolderIcon, SettingsGearIcon, EyeIcon, PencilIcon, SaveIcon, CancelIcon, TrashIcon } from './icons'
+import { EmailIcon, PsdIcon, ImageIcon, VideoIcon, AudioIcon, ArchiveIcon, TextIcon, DefaultFileIcon, DownloadIcon, UploadIcon, InfoIcon, FolderIcon, SettingsGearIcon, EyeIcon, PencilIcon, SaveIcon, CancelIcon, TrashIcon, AuthShieldIcon } from './icons'
 import { WhatsAppBrandIcon, PdfBrandIcon, PhotoshopBrandIcon } from './brandIcons'
 import { WordLocalIcon, ExcelLocalIcon, PowerPointLocalIcon, WinRARLocalIcon } from './brandLocal'
 
@@ -146,7 +146,7 @@ function TypeBadge({ type, name }) {
   );
 }
 
-function FileRow({ index, file, onRefresh, onPreview }) {
+function FileRow({ index, file, onRefresh, onPreview, isSelected, onToggleSelect, folderCode }) {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(file.name);
   const [open, setOpen] = useState(false);
@@ -156,7 +156,7 @@ function FileRow({ index, file, onRefresh, onPreview }) {
   const [folders, setFolders] = useState([]);
 
   const download = async () => {
-    const blob = await apiGetFileBlob(file.id);
+    const blob = await apiGetFileBlob(file.id, folderCode);
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -216,6 +216,11 @@ function FileRow({ index, file, onRefresh, onPreview }) {
   return (
     <>
     <tr>
+      {onToggleSelect && (
+        <td className="col-select">
+          <input type="checkbox" checked={!!isSelected} onChange={() => onToggleSelect(file.id)} aria-label="Sélectionner" />
+        </td>
+      )}
       <td className="col-index">{(index ?? 0) + 1}</td>
       <td>
         {editing ? (
@@ -307,14 +312,24 @@ function FileRow({ index, file, onRefresh, onPreview }) {
   );
 }
 
-function FileList({ files, onRefresh, onPreview }) {
-  if (!files.length) return <p className="empty">Aucun fichier. Ajoutez-en avec le bouton ci-dessus.</p>;
+function FileList({ files, onRefresh, onPreview, selectable = false, selectedIds = new Set(), onToggleSelect, onToggleAll, folderCode, emptyText }) {
+  if (!files.length) return <p className="empty">{emptyText || 'Aucun fichier. Ajoutez-en avec le bouton ci-dessus.'}</p>;
   const needsScroll = files.length > 10;
   return (
     <div className={`table-wrap ${needsScroll ? 'scroll' : ''}`}>
       <table className="table">
         <thead>
           <tr>
+            {selectable && (
+              <th className="col-select">
+                <input
+                  type="checkbox"
+                  checked={files.length > 0 && selectedIds.size === files.length}
+                  onChange={(e)=> onToggleAll?.(e.target.checked)}
+                  aria-label="Tout sélectionner"
+                />
+              </th>
+            )}
             <th className="col-index">N°</th>
             <th>Nom</th>
             <th>Type</th>
@@ -325,7 +340,16 @@ function FileList({ files, onRefresh, onPreview }) {
         </thead>
         <tbody>
           {files.map((f, idx) => (
-            <FileRow key={f.id} index={idx} file={f} onRefresh={onRefresh} onPreview={onPreview} />
+            <FileRow
+              key={f.id}
+              index={idx}
+              file={f}
+              onRefresh={onRefresh}
+              onPreview={onPreview}
+              isSelected={selectable ? selectedIds.has(f.id) : undefined}
+              onToggleSelect={selectable ? onToggleSelect : undefined}
+              folderCode={folderCode}
+            />
           ))}
         </tbody>
       </table>
@@ -430,31 +454,87 @@ function PreviewModal({ open, onClose, file, source }) {
   );
 }
 
-function Topbar({ onToggleSidebar, onOpenSettings }) {
+function Topbar({ onToggleSidebar, onOpenSettings, user, onLogout }) {
+  const [menuOpen, setMenuOpen] = useState(false);
   return (
     <header className="topbar">
       <button className="icon-btn" aria-label="Menu" onClick={onToggleSidebar}>☰</button>
       <div className="brand">Gestionnaire de fichiers</div>
-      <button className="icon-btn" aria-label="Paramètres" onClick={onOpenSettings}>⚙️</button>
+      <div style={{ marginLeft:'auto', display:'inline-flex', alignItems:'center', gap:8, position:'relative' }}>
+        <button className="icon-btn" aria-label="Paramètres" onClick={onOpenSettings}>⚙️</button>
+        <button className="icon-btn" aria-label="Profil" onClick={()=>setMenuOpen(o=>!o)} title={user?.username || 'Profil'}>
+          {user?.username || 'Profil'} ⌄
+        </button>
+        {menuOpen && (
+          <div className="popover-menu" role="menu" style={{ position:'absolute', top:36, right:0 }} onMouseLeave={()=>setMenuOpen(false)}>
+            <button role="menuitem" onClick={()=>{ onOpenSettings(); setMenuOpen(false); }}>Paramètres</button>
+            <button role="menuitem" onClick={()=>{ onLogout(); setMenuOpen(false); }}>Se déconnecter</button>
+          </div>
+        )}
+      </div>
     </header>
   );
 }
 
-function Sidebar({ current, go }) {
+function Sidebar({ current, go, isAdmin }) {
   return (
     <aside className="sidebar">
       <nav>
         <button className={current==='files'?'active':''} onClick={()=>go('files')}><span style={{display:'inline-flex',alignItems:'center',gap:8}}><FolderIcon /> Fichiers</span></button>
         <button className={current==='folders'?'active':''} onClick={()=>go('folders')}><span style={{display:'inline-flex',alignItems:'center',gap:8}}><FolderIcon /> Dossiers</span></button>
+        {isAdmin && (
+          <button className={current==='admin'?'active':''} onClick={()=>go('admin')}><span style={{display:'inline-flex',alignItems:'center',gap:8}}>👤 Admin</span></button>
+        )}
         <button className={current==='settings'?'active':''} onClick={()=>go('settings')}><span style={{display:'inline-flex',alignItems:'center',gap:8}}><SettingsGearIcon /> Paramètres</span></button>
       </nav>
     </aside>
   );
 }
 
-function Settings({ authed, setAuthed, onExport, onImport, pin, setPin }) {
+function LoginPage({ onLoggedIn }) {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const login = async () => {
+    if (!username || !password) { alert('Entrez identifiant et mot de passe'); return; }
+    setLoading(true);
+    try {
+      const { token, user } = await apiLogin(username, password);
+      setAuthToken(token);
+      localStorage.setItem('auth_token', token);
+      localStorage.setItem('auth_user', JSON.stringify(user));
+      onLoggedIn({ token, user });
+    } catch (e) {
+      alert(e?.message || 'Connexion échouée');
+    } finally {
+      setLoading(false);
+    }
+  };
+  return (
+    <div className="login-wrap">
+      <div className="login-card">
+        <div className="login-icon" aria-hidden>
+          <AuthShieldIcon />
+        </div>
+        <div className="login-head">
+          <h1>Connexion</h1>
+          <p className="sub">Accédez à votre espace sécurisé</p>
+        </div>
+        <div className="login-form">
+          <input className="text-input" placeholder="Nom d'utilisateur" autoComplete="username" value={username} onChange={(e)=>setUsername(e.target.value)} onKeyDown={(e)=>{ if (e.key==='Enter') login(); }} />
+          <input className="text-input" type="password" placeholder="Mot de passe" autoComplete="current-password" value={password} onChange={(e)=>setPassword(e.target.value)} onKeyDown={(e)=>{ if (e.key==='Enter') login(); }} />
+          <button className="login-btn" onClick={login} disabled={loading}>{loading ? 'Connexion…' : 'Se connecter'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Settings({ isAdmin, authed, setAuthed, onExport, onImport, pin, setPin }) {
   const [inputPin, setInputPin] = useState('');
   const [newPin, setNewPin] = useState('');
+  const [sub, setSub] = useState(null);
+  const [checking, setChecking] = useState(false);
 
   useEffect(() => {
     const saved = localStorage.getItem('app_pin');
@@ -462,6 +542,18 @@ function Settings({ authed, setAuthed, onExport, onImport, pin, setPin }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Pour les utilisateurs non-admin: uniquement changement de mot de passe, sans autre section
+  if (!isAdmin) {
+    return (
+      <div className="card">
+        <h3>Mon compte</h3>
+        <p>Changer mon mot de passe</p>
+        <ChangePasswordForm />
+      </div>
+    );
+  }
+
+  // Pour les admins: on conserve l'authentification par PIN pour accéder aux réglages avancés
   if (!authed) {
     return (
       <div className="card settings">
@@ -469,9 +561,12 @@ function Settings({ authed, setAuthed, onExport, onImport, pin, setPin }) {
         <p>Entrez votre code PIN pour accéder aux paramètres.</p>
         <div className="pin-row">
           <input className="text-input pin" type="password" placeholder="Code PIN" value={inputPin} onChange={(e)=>setInputPin(e.target.value)} />
-          <button onClick={()=>{
+          <button onClick={async ()=>{
             const saved = localStorage.getItem('app_pin') || pin;
-            if (inputPin === saved) setAuthed(true); else alert('PIN incorrect');
+            if (inputPin === saved) {
+              setAuthed(true);
+              try { const r = await apiGetSubscription(); setSub(r); } catch {}
+            } else alert('PIN incorrect');
           }}>Se connecter</button>
         </div>
       </div>
@@ -480,6 +575,43 @@ function Settings({ authed, setAuthed, onExport, onImport, pin, setPin }) {
 
   return (
     <>
+      {/* Charger l'abonnement au montage si non chargé */}
+      <LoadSubscription sub={sub} setSub={setSub} />
+      <div className="card" style={{ marginBottom: '1rem' }}>
+        <h3>Abonnement</h3>
+        <p className="muted">L'application requiert un abonnement actif. Renouvelez tous les 30 jours.</p>
+        <div className="actions-row" style={{ justifyContent: 'space-between', flexWrap: 'wrap' }}>
+          <div>
+            <strong>Statut:</strong>{' '}
+            <span>
+              {sub?.expiresAt ? `Expire le ${new Date(sub.expiresAt).toLocaleString()}` : 'Inconnu'}
+            </span>
+          </div>
+          <div style={{ display: 'inline-flex', gap: 8 }}>
+            <button className="icon-btn" title="Payer l'abonnement" onClick={async ()=>{
+              try {
+                const { paymentUrl } = await apiCreateSubscriptionCheckout(30);
+                if (paymentUrl) window.open(paymentUrl, '_blank');
+                // Optionally start a light polling for few times
+                setChecking(true);
+                let tries = 0;
+                const tick = async () => {
+                  tries++;
+                  try { const r = await apiGetSubscription(); setSub(r); } catch {}
+                  if (tries < 12) { setTimeout(tick, 5000); } else { setChecking(false); }
+                };
+                setTimeout(tick, 5000);
+              } catch (e) {
+                alert(e?.message || 'Échec de création du paiement');
+              }
+            }}>Payer en ligne</button>
+            <button onClick={async ()=>{ try { const r = await apiExtendSubscription(30); setSub(r); alert('Abonnement prolongé de 30 jours'); } catch(e){ alert(e?.message||'Échec prolongation'); } }}>Marquer comme payé (30j)</button>
+            <button onClick={async ()=>{ try { const r = await apiGetSubscription(); setSub(r); } catch(e){ alert(e?.message||'Échec actualisation'); } }}>Actualiser</button>
+          </div>
+        </div>
+        {checking && (<div className="muted" style={{marginTop:8}}>En attente de la confirmation du paiement…</div>)}
+      </div>
+
       <div className="settings-grid">
         <div className="card">
           <h3>Base de données</h3>
@@ -506,9 +638,14 @@ function Settings({ authed, setAuthed, onExport, onImport, pin, setPin }) {
           </div>
           <button onClick={()=>setAuthed(false)}>Se déconnecter</button>
         </div>
+        <div className="card">
+          <h3>Mon compte</h3>
+          <p>Changer mon mot de passe</p>
+          <ChangePasswordForm />
+        </div>
       </div>
 
-      {/* Tableau de bord inclus et protégé (visible uniquement après authentification) */}
+      {/* Tableau de bord inclus et protégé (réservé aux admins) */}
       <div style={{ marginTop: '1rem' }}>
         <DashboardPage />
       </div>
@@ -516,16 +653,139 @@ function Settings({ authed, setAuthed, onExport, onImport, pin, setPin }) {
   );
 }
 
-function FilesPage() {
+function LoadSubscription({ sub, setSub }) {
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (sub != null) return;
+      try { const r = await apiGetSubscription(); if (!cancelled) setSub(r); } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [sub]);
+  return null;
+}
+
+function ChangePasswordForm() {
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const doChange = async () => {
+    if (!currentPassword || !newPassword) { alert('Champs requis'); return; }
+    setLoading(true);
+    try {
+      await apiChangePassword(currentPassword, newPassword);
+      setCurrentPassword(''); setNewPassword('');
+      alert('Mot de passe mis à jour');
+    } catch (e) {
+      alert(e?.message || 'Échec mise à jour');
+    } finally { setLoading(false); }
+  };
+  return (
+    <div className="input-row" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8 }}>
+      <input className="text-input" type="password" placeholder="Mot de passe actuel" value={currentPassword} onChange={(e)=>setCurrentPassword(e.target.value)} />
+      <input className="text-input" type="password" placeholder="Nouveau mot de passe" value={newPassword} onChange={(e)=>setNewPassword(e.target.value)} />
+      <div style={{ display:'flex', justifyContent:'flex-end' }}>
+        <button onClick={doChange} disabled={loading}>{loading ? 'Mise à jour…' : 'Mettre à jour'}</button>
+      </div>
+    </div>
+  );
+}
+
+function AdminPage() {
+  const [users, setUsers] = useState([]);
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [isAdmin, setIsAdmin] = useState(false);
+  const refresh = async () => { try { const list = await apiListUsers(); setUsers(list); } catch (e) { alert(e?.message || 'Erreur chargement'); } };
+  useEffect(() => { refresh(); }, []);
+  const create = async () => {
+    const u = username.trim(); const p = password.trim();
+    if (!u || !p) { alert('Champs requis'); return; }
+    try { await apiCreateUser(u, p, isAdmin); setUsername(''); setPassword(''); setIsAdmin(false); refresh(); } catch (e) { alert(e?.message || 'Erreur création'); }
+  };
+  return (
+    <div className="container">
+      <h2 className="title">Administration</h2>
+      <div className="card" style={{ marginBottom: 12 }}>
+        <h3>Créer un utilisateur</h3>
+        <div className="input-row">
+          <input className="text-input" placeholder="Nom d'utilisateur" value={username} onChange={(e)=>setUsername(e.target.value)} />
+          <input className="text-input" type="password" placeholder="Mot de passe" value={password} onChange={(e)=>setPassword(e.target.value)} />
+          <label style={{ display:'inline-flex', alignItems:'center', gap:8 }}><input type="checkbox" checked={isAdmin} onChange={(e)=>setIsAdmin(e.target.checked)} /> Admin</label>
+          <button onClick={create}>Créer</button>
+        </div>
+      </div>
+      <div className="card">
+        <h3>Utilisateurs</h3>
+        <div className="table-wrap">
+          <table className="table">
+            <thead><tr><th>N°</th><th>Nom</th><th>Admin</th><th>Créé</th><th>Actions</th></tr></thead>
+            <tbody>
+              {users.map((u, i) => (
+                <tr key={u.id}>
+                  <td className="col-index">{i+1}</td>
+                  <td>{u.username}</td>
+                  <td>{u.isAdmin ? 'Oui' : 'Non'}</td>
+                  <td>{u.createdAt ? new Date(u.createdAt).toLocaleString() : ''}</td>
+                  <td className="actions">
+                    <button title="Basculer admin" onClick={async ()=>{ await apiUpdateUser(u.id, { isAdmin: !u.isAdmin }); refresh(); }}>Admin</button>
+                    <button title="Réinitialiser mot de passe" onClick={async ()=>{ const np = window.prompt('Nouveau mot de passe:')||''; if (!np) return; await apiUpdateUser(u.id, { password: np }); alert('Mot de passe réinitialisé'); }}>Reset</button>
+                    <button title="Supprimer" onClick={async ()=>{ if (!window.confirm('Supprimer cet utilisateur ?')) return; await apiDeleteUser(u.id); refresh(); }}>Supprimer</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FilesPage({ folderFilter, setFolderFilter }) {
   const [all, setAll] = useState([]);
   const [q, setQ] = useState('');
   const [preview, setPreview] = useState({ open: false, file: null, source: null });
+  const [selected, setSelected] = useState(new Set());
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkDest, setBulkDest] = useState('');
+  const [allFolders, setAllFolders] = useState([]);
+  const [foldersList, setFoldersList] = useState([]);
+  // Code de dossier pour le dossier actuellement sélectionné (non persistant)
+  const [currentFolderCode, setCurrentFolderCode] = useState(null);
+  // Modal PIN pour sélection d'un dossier protégé
+  const [pinOpen, setPinOpen] = useState(false);
+  const [pinValue, setPinValue] = useState('');
+  const [pendingFolder, setPendingFolder] = useState(null); // { id, name }
 
   const refresh = async () => {
-  const list = await apiListFiles();
+    let list = [];
+    if (folderFilter === '') {
+      // Tous les fichiers (global, protégés exclus par design côté API)
+      list = await apiListFiles();
+    } else if (folderFilter === 'root') {
+      // Fichiers de la racine uniquement
+      const allFiles = await apiListFiles();
+      list = allFiles.filter(f => (f.folderId ?? null) === null);
+    } else {
+      // Fichiers d'un dossier spécifique (gérer PIN si protégé)
+      const fid = Number(folderFilter);
+      const fd = foldersList.find(f => f.id === fid);
+      const code = fd?.protected ? currentFolderCode : null;
+      if (fd?.protected && (!code || String(code).length !== 4)) {
+        // Code manquant: attendre sélection via la modale
+        setAll([]);
+        return;
+      }
+      list = await apiListFiles(fid, code || undefined);
+    }
     setAll(list.map(({ id, name, type, size, createdAt }) => ({ id, name, type, size: size || 0, createdAt: createdAt || Date.now() })));
+    setSelected(new Set());
   };
-  useEffect(() => { refresh(); }, []);
+  useEffect(() => { refresh(); }, [folderFilter]);
+  useEffect(() => { (async ()=>{ const fs = await apiListFolders(); setFoldersList(fs); })(); }, []);
+  // Reset code when folder filter changes away
+  useEffect(() => { if (folderFilter === '' || folderFilter === 'root') setCurrentFolderCode(null); }, [folderFilter]);
 
   // Today window
   const startOfToday = useMemo(() => {
@@ -536,12 +796,17 @@ function FilesPage() {
 
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase();
+    // Si un dossier est sélectionné, on n'applique PAS le filtre "aujourd'hui" par défaut
     if (!s) {
-      // By default show only files added today
-      return all.filter(f => {
-        const t = new Date(f.createdAt).getTime();
-        return t >= startOfToday && t < endOfToday;
-      });
+      if (folderFilter === '') {
+        // Par défaut (tous), n'afficher que les fichiers du jour
+        return all.filter(f => {
+          const t = new Date(f.createdAt).getTime();
+          return t >= startOfToday && t < endOfToday;
+        });
+      }
+      // Un dossier est filtré (root ou id): on affiche tout le contenu du dossier
+      return all;
     }
     // When searching, search across all files
     return all.filter(f =>
@@ -597,6 +862,39 @@ function FilesPage() {
       <div className="toolbar">
         <FileUploader onAdded={refresh} />
         <SearchBar query={q} setQuery={setQ} />
+        <div style={{ display:'inline-flex', alignItems:'center', gap:6 }}>
+          <label style={{ fontSize:12, opacity:0.8 }}>Dossier</label>
+          <select
+            value={folderFilter}
+            onChange={(e)=>{
+              const v = e.target.value;
+              if (v === '' || v === 'root') {
+                setCurrentFolderCode(null);
+                setFolderFilter(v);
+                return;
+              }
+              const fid = Number(v);
+              const fd = foldersList.find(f => f.id === fid);
+              if (fd?.protected) {
+                setPendingFolder({ id: fd.id, name: fd.name });
+                setPinValue('');
+                setPinOpen(true);
+                // ne change pas le filtre ici; on attend la validation du PIN
+              } else {
+                setCurrentFolderCode(null);
+                setFolderFilter(v);
+              }
+            }}
+          >
+            <option value="">(Tous)</option>
+            <option value="root">(Racine)</option>
+            {foldersList.map(fd => (
+              <option key={fd.id} value={String(fd.id)}>
+                {fd.name}{fd.protected ? ' 🔒' : ''}
+              </option>
+            ))}
+          </select>
+        </div>
         <div className="storage-widget" title={`Stockage: ${bytesToHuman(totalBytes)} / ${quotaGbStr}`}>
           <CircularProgress value={pct} />
           <div className="storage-text">
@@ -605,20 +903,107 @@ function FilesPage() {
           </div>
         </div>
       </div>
-      <div className="muted" style={{marginBottom:'0.5rem', fontSize:12}}>Affichage: fichiers ajoutés aujourd'hui. Utilisez la recherche pour retrouver les autres.</div>
-      <FileList files={filtered} onRefresh={refresh} onPreview={async (file) => {
+      {folderFilter === '' && (
+        <div className="muted" style={{marginBottom:'0.5rem', fontSize:12}}>Affichage: fichiers ajoutés aujourd'hui. Utilisez la recherche pour retrouver les autres.</div>
+      )}
+      {selected.size > 0 && (
+        <div style={{ display:'flex', alignItems:'center', gap:8, margin:'6px 0' }}>
+          <strong>{selected.size} sélectionné(s)</strong>
+          <button onClick={async ()=>{ const f = await apiListFolders(); setAllFolders(f); setBulkDest(''); setBulkOpen(true); }}>Déplacer…</button>
+          <button onClick={()=>setSelected(new Set())}>Tout désélectionner</button>
+        </div>
+      )}
+      <FileList
+        files={filtered}
+        onRefresh={refresh}
+            onPreview={async (file) => {
         try {
-          const blob = await apiGetFileBlob(file.id);
+              // Utilise le code du dossier courant si nécessaire
+              const blob = await apiGetFileBlob(file.id, currentFolderCode || undefined);
           const url = URL.createObjectURL(blob);
           setPreview({ open: true, file, source: { blob, url } });
         } catch (e) {
           alert('Impossible d\'ouvrir: ' + (e?.message || e));
         }
-      }} />
+      }}
+        selectable
+        selectedIds={selected}
+        onToggleSelect={(id)=> setSelected(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; })}
+        onToggleAll={(checked)=> setSelected(checked ? new Set(filtered.map(f=>f.id)) : new Set())}
+    // Transmet le code du dossier courant (non persistant)
+    folderCode={(folderFilter && folderFilter !== '' && folderFilter !== 'root') ? (currentFolderCode || undefined) : undefined}
+      />
       <PreviewModal open={preview.open} file={preview.file} source={preview.source} onClose={()=>{
         if (preview.source?.url) URL.revokeObjectURL(preview.source.url);
         setPreview({ open: false, file: null, source: null });
       }} />
+
+      {pinOpen && (
+        <div className="modal-overlay" onClick={()=>{ setPinOpen(false); setPendingFolder(null); setPinValue(''); }}>
+          <div className="modal" onClick={(e)=>e.stopPropagation()}>
+            <div className="modal-header">
+              <strong>Déverrouiller le dossier</strong>
+              <button className="icon-btn" onClick={()=>{ setPinOpen(false); setPendingFolder(null); setPinValue(''); }}>✖️</button>
+            </div>
+            <div className="modal-body">
+              <div style={{ marginBottom: 8 }}>Dossier: <strong>{pendingFolder?.name || ''}</strong></div>
+              <label>Code PIN</label>
+              <input className="text-input pin" type="password" value={pinValue} onChange={(e)=>setPinValue(e.target.value)} onKeyDown={(e)=>{ if (e.key==='Enter') {
+                if ((pinValue||'').length !== 4) { alert('Le code doit contenir 4 caractères'); return; }
+                setCurrentFolderCode(pinValue);
+                setPinOpen(false);
+                const id = pendingFolder?.id;
+                setPendingFolder(null);
+                setFolderFilter(String(id));
+                setPinValue('');
+              } }} autoFocus />
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
+                <button onClick={()=>{ setPinOpen(false); setPendingFolder(null); setPinValue(''); }}>Annuler</button>
+                <button onClick={()=>{
+                  if ((pinValue||'').length !== 4) { alert('Le code doit contenir 4 caractères'); return; }
+                  setCurrentFolderCode(pinValue);
+                  setPinOpen(false);
+                  const id = pendingFolder?.id;
+                  setPendingFolder(null);
+                  setFolderFilter(String(id));
+                  setPinValue('');
+                }}>Déverrouiller</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {bulkOpen && (
+        <div className="modal-overlay" onClick={()=>setBulkOpen(false)}>
+          <div className="modal" onClick={(e)=>e.stopPropagation()}>
+            <div className="modal-header">
+              <strong>Déplacer les fichiers sélectionnés</strong>
+              <button className="icon-btn" onClick={()=>setBulkOpen(false)}>✖️</button>
+            </div>
+            <div className="modal-body">
+              <label>Choisir le dossier de destination</label>
+              <select value={bulkDest} onChange={(e)=>setBulkDest(e.target.value)}>
+                <option value="">Racine (sans dossier)</option>
+                {allFolders.map(f => (
+                  <option key={f.id} value={String(f.id)}>{f.name}</option>
+                ))}
+              </select>
+              <div style={{ display:'flex', gap:8, justifyContent:'flex-end', marginTop:8 }}>
+                <button onClick={()=>setBulkOpen(false)}>Annuler</button>
+                <button onClick={async ()=>{
+                  const ids = Array.from(selected);
+                  if (ids.length === 0) { setBulkOpen(false); return; }
+                  await apiMoveFiles(ids, bulkDest ? Number(bulkDest) : null);
+                  setBulkOpen(false);
+                  setSelected(new Set());
+                  await refresh();
+                }}>Déplacer</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -626,19 +1011,21 @@ function FilesPage() {
 function FoldersPage() {
   const [folders, setFolders] = useState([]);
   const [current, setCurrent] = useState(null); // current folderId
-  const [all, setAll] = useState([]);
+  const [files, setFiles] = useState([]);
+  const [preview, setPreview] = useState({ open: false, file: null, source: null });
   const [newName, setNewName] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
   const [createProtected, setCreateProtected] = useState(false);
+  const [createCode, setCreateCode] = useState('');
   const [path, setPath] = useState([]); // breadcrumb: array of {id,name}
   const [renameTarget, setRenameTarget] = useState(null); // folder object
   const [renameValue, setRenameValue] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(null); // folder object
   const [pinPrompt, setPinPrompt] = useState({ open: false, folder: null, value: '' });
-  const [unlocked, setUnlocked] = useState(()=>{
-    try { return JSON.parse(sessionStorage.getItem('unlocked_folders')||'[]'); } catch { return []; }
-  });
+  // Code éphémère pour le dossier actuel
+  const [currentCode, setCurrentCode] = useState(null);
   const [menuOpenId, setMenuOpenId] = useState(null);
+  const [stats, setStats] = useState({}); // { [folderId]: { count:number, size:number } | { locked:true } }
 
   const refreshFolders = async () => {
     const fs = await apiListFolders();
@@ -646,13 +1033,7 @@ function FoldersPage() {
     // Ensure breadcrumb is consistent
     if (current == null) setPath([]);
   };
-  const refreshFiles = async () => {
-    const list = await apiListFiles(current != null ? current : undefined);
-    const scoped = current == null ? list.filter(f => (f.folderId ?? null) === null) : list;
-    setAll(scoped.map(({ id, name, type, size, createdAt }) => ({ id, name, type, size: size || 0, createdAt: createdAt || Date.now() })));
-  };
   useEffect(() => { refreshFolders(); }, []);
-  useEffect(() => { refreshFiles(); }, [current]);
 
   const createFolder = async () => {
     const n = newName.trim();
@@ -660,70 +1041,120 @@ function FoldersPage() {
     // create under current folder
     const parentId = current ?? null;
     try {
-      await apiCreateFolder(n, parentId, createProtected);
+      await apiCreateFolder(n, parentId, createProtected, createProtected ? createCode : undefined);
     } catch (e) {
       alert(e?.message || 'Erreur lors de la création du dossier');
       return;
     }
     setNewName('');
     setCreateProtected(false);
+    setCreateCode('');
     setCreateOpen(false);
     await refreshFolders();
-    // Stay in the same folder and show new list
-    await refreshFiles();
   };
 
   // Compute child folders of the current folder
   const childFolders = (folders || []).filter(f => (f.parentId ?? null) === (current ?? null));
+
+  // Load files for the current folder (show files only when inside a folder; hide at root)
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        if (current == null) { setFiles([]); return; }
+        const fd = folders.find(f => f.id === current);
+        const code = fd?.protected ? currentCode : undefined;
+        if (fd?.protected && (!code || String(code).length !== 4)) { setFiles([]); return; }
+        const list = await apiListFiles(current, code);
+        if (!cancelled) setFiles(list.map(({ id, name, type, size, createdAt }) => ({ id, name, type, size: size || 0, createdAt: createdAt || Date.now() })));
+      } catch (e) {
+        if (!cancelled) setFiles([]);
+      }
+    })();
+    return () => { cancelled = true };
+  }, [current, currentCode, folders.map(f=>f.id).join(',')]);
+
+  // Charger les stats (nb de fichiers, taille totale) pour chaque sous-dossier non protégé
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!childFolders.length) { setStats({}); return; }
+      const entries = await Promise.all(childFolders.map(async (fd) => {
+        if (fd.protected) return [fd.id, { locked: true }];
+        try {
+          const list = await apiListFiles(fd.id);
+          const count = list.length;
+          const size = list.reduce((a, b) => a + (b.size || 0), 0);
+          return [fd.id, { count, size }];
+        } catch (_) {
+          return [fd.id, { error: true }];
+        }
+      }));
+      if (!cancelled) {
+        const map = {};
+        for (const [id, val] of entries) map[id] = val;
+        setStats(map);
+      }
+    })();
+    // Recalcule si la liste de sous-dossiers change
+    return () => { cancelled = true };
+  }, [childFolders.map(f=>f.id).join(',')]);
 
   const goTo = (folder) => {
     const id = folder?.id ?? null;
     if (id != null) {
       const fd = folders.find(f=>f.id===id);
       const isProt = !!fd?.protected;
-      const isUnlocked = unlocked.includes(id);
-      if (isProt && !isUnlocked) {
+      if (isProt) {
         setPinPrompt({ open: true, folder: fd, value: '' });
         return;
       }
     }
+    // Open folder in-place
     setCurrent(id);
-    if (id == null) {
-      setPath([]);
-    } else {
-      // rebuild breadcrumb from root
-      const chain = [];
-      let cur = folder;
-      while (cur) {
-        chain.unshift({ id: cur.id, name: cur.name });
-        cur = folders.find(x => x.id === cur.parentId);
-      }
-      setPath(chain);
-    }
+    setCurrentCode(null);
+    // rebuild breadcrumb
+    const chain = [];
+    let cur = id == null ? null : folders.find(x => x.id === id);
+    while (cur) { chain.unshift({ id: cur.id, name: cur.name }); cur = folders.find(x => x.id === cur.parentId); }
+    setPath(chain);
+  };
+
+  const goUp = () => {
+    if (current == null) return;
+    const cur = folders.find(f=>f.id===current);
+    const parentId = cur?.parentId ?? null;
+    setCurrent(parentId);
+    setCurrentCode(null);
+    const chain = [];
+    let p = parentId == null ? null : folders.find(x => x.id === parentId);
+    while (p) { chain.unshift({ id: p.id, name: p.name }); p = folders.find(x => x.id === p.parentId); }
+    setPath(chain);
   };
 
   const onConfirmPin = () => {
     const fd = pinPrompt.folder;
-    const savedPin = localStorage.getItem('app_pin') || 'Gilles29@';
-    if ((pinPrompt.value||'') === savedPin) {
-      const next = [...unlocked, fd.id];
-      setUnlocked(next);
-      sessionStorage.setItem('unlocked_folders', JSON.stringify(next));
-      setPinPrompt({ open: false, folder: null, value: '' });
-      setCurrent(fd.id);
-      // rebuild path
-      const chain = [];
-      let cur = fd;
-      while (cur) { chain.unshift({ id: cur.id, name: cur.name }); cur = folders.find(x => x.id === cur.parentId); }
-      setPath(chain);
-    } else {
-      alert('PIN incorrect');
-    }
+    const code = (pinPrompt.value||'').trim();
+    if (code.length !== 4) { alert('Le code doit contenir 4 caractères'); return; }
+    setCurrentCode(code);
+    setPinPrompt({ open: false, folder: null, value: '' });
+    setCurrent(fd.id);
+    // rebuild path
+    const chain = [];
+    let cur = fd;
+    while (cur) { chain.unshift({ id: cur.id, name: cur.name }); cur = folders.find(x => x.id === cur.parentId); }
+    setPath(chain);
   };
 
   const toggleProtect = async (fd) => {
     const nextVal = !fd.protected;
-    await apiSetFolderProtected(fd.id, nextVal);
+    if (nextVal) {
+      const code = window.prompt('Entrer le code (4 caractères) pour protéger ce dossier:') || '';
+      if (code.length !== 4) { alert('Code invalide (4 caractères requis)'); return; }
+      await apiUpdateFolder(fd.id, { protected: true, code });
+    } else {
+      await apiUpdateFolder(fd.id, { protected: false, code: null });
+    }
     await refreshFolders();
   };
 
@@ -741,13 +1172,11 @@ function FoldersPage() {
       await apiDeleteFolder(confirmDelete.id);
       setConfirmDelete(null);
       await refreshFolders();
-      await refreshFiles();
     } catch (e) {
       // Si le serveur renvoie 404, le dossier n'existe plus (déjà supprimé). On rafraîchit l'UI et on informe doucement.
       if (e && (e.status === 404)) {
         setConfirmDelete(null);
         await refreshFolders();
-        await refreshFiles();
         alert('Ce dossier n’existe plus (il a peut-être déjà été supprimé). La liste a été actualisée.');
       } else {
         alert(e?.message || 'Erreur lors de la suppression du dossier');
@@ -759,6 +1188,9 @@ function FoldersPage() {
     <div className="container">
       <h2 className="title">Dossiers</h2>
       <div className="toolbar" style={{ gap: 8, flexWrap: 'wrap' }}>
+        <button className="icon-btn" onClick={goUp} title="Retour">
+          ←
+        </button>
         <button onClick={()=>setCreateOpen(true)}>Nouveau dossier</button>
         <div className="breadcrumb" style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
           <button className="icon-btn" onClick={()=>goTo(null)} title="Racine">🏠</button>
@@ -780,6 +1212,15 @@ function FoldersPage() {
             <div className="folder-icon" onDoubleClick={()=>goTo(fd)}>{fd.protected ? '🔒' : '📁'}</div>
             <div className="folder-name" title={fd.name} onDoubleClick={()=>goTo(fd)}>
               {fd.name}
+            </div>
+            <div className="folder-meta" aria-label="Statistiques du dossier">
+              {fd.protected ? (
+                <span>Protégé</span>
+              ) : stats[fd.id] && stats[fd.id].count != null ? (
+                <span>{stats[fd.id].count} fichier(s) • {bytesToSize(stats[fd.id].size || 0)}</span>
+              ) : (
+                <span>…</span>
+              )}
             </div>
             <button
               className="icon-btn"
@@ -804,16 +1245,40 @@ function FoldersPage() {
         ))}
       </div>
 
-      {/* Fichiers du dossier courant */}
-      <h3 style={{ marginTop: '1rem' }}>Fichiers</h3>
-      <FileList files={all} onRefresh={refreshFiles} onPreview={async (file) => {
-        try {
-          const blob = await apiGetFileBlob(file.id);
-          const url = URL.createObjectURL(blob);
-          // Reuse PreviewModal of FilesPage by opening a new modal? For now, simple download to keep page small.
-          const a = document.createElement('a'); a.href = url; a.download = file.name; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
-        } catch (e) { alert('Impossible d\'ouvrir: ' + (e?.message || e)); }
-      }} />
+      {/* Afficher les fichiers seulement à l'intérieur d'un dossier (pas à la racine) */}
+      {current != null && (
+        <div style={{ marginTop: '1rem' }}>
+          <FileList
+            files={files}
+            onRefresh={async () => {
+              try {
+                const fd = folders.find(f=>f.id===current);
+                const code = fd?.protected ? currentCode : undefined;
+                const list = await apiListFiles(current, code);
+                setFiles(list.map(({ id, name, type, size, createdAt }) => ({ id, name, type, size: size || 0, createdAt: createdAt || Date.now() })));
+              } catch {}
+            }}
+            onPreview={async (file) => {
+              try {
+                const fd = folders.find(f=>f.id===current);
+                const code = fd?.protected ? currentCode : undefined;
+                const blob = await apiGetFileBlob(file.id, code);
+                const url = URL.createObjectURL(blob);
+                setPreview({ open: true, file, source: { blob, url } });
+              } catch (e) {
+                alert('Impossible d\'ouvrir: ' + (e?.message || e));
+              }
+            }}
+            selectable={false}
+            folderCode={(folders.find(f=>f.id===current)?.protected ? currentCode : undefined)}
+            emptyText={'Aucun fichier dans ce dossier.'}
+          />
+          <PreviewModal open={preview.open} file={preview.file} source={preview.source} onClose={()=>{
+            if (preview.source?.url) URL.revokeObjectURL(preview.source.url);
+            setPreview({ open: false, file: null, source: null });
+          }} />
+        </div>
+      )}
 
       {createOpen && (
         <div className="modal-overlay" onClick={()=>setCreateOpen(false)}>
@@ -893,6 +1358,7 @@ function FoldersPage() {
           </div>
         </div>
       )}
+
     </div>
   );
 }
@@ -1002,9 +1468,18 @@ function DashboardPage() {
 export default function App() {
   const [view, setView] = useState('files'); // 'files' | 'folders' | 'settings'
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [auth, setAuth] = useState(()=>{
+    try {
+      const token = localStorage.getItem('auth_token') || '';
+      const user = JSON.parse(localStorage.getItem('auth_user')||'null');
+      if (token) setAuthToken(token);
+      return { token, user };
+    } catch { return { token: '', user: null }; }
+  });
   const [authed, setAuthed] = useState(false);
   const defaultPin = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_DEFAULT_PIN) || 'Gilles29@';
   const [pin, setPin] = useState(localStorage.getItem('app_pin') || defaultPin);
+  const [folderFilter, setFolderFilter] = useState('');
 
   // Initialise/maj du PIN si non défini ou encore à l'ancienne valeur par défaut
   useEffect(() => {
@@ -1016,6 +1491,16 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   // Astuce PIN par défaut visible dans les paramètres après authentification.
+
+  // Auto-logout on 401 from API
+  useEffect(() => {
+    const onUnauth = () => {
+      setAuth({ token: '', user: null });
+      setAuthToken('');
+    };
+    window.addEventListener('app:unauthorized', onUnauth);
+    return () => window.removeEventListener('app:unauthorized', onUnauth);
+  }, []);
 
   const go = (v) => { setView(v); setSidebarOpen(false); };
 
@@ -1040,16 +1525,21 @@ export default function App() {
     e.target.value = '';
   };
 
+  if (!auth?.token || !auth?.user) {
+    return <LoginPage onLoggedIn={(a)=>{ setAuth(a); setView('files'); }} />;
+  }
+
   return (
     <div className={`layout ${sidebarOpen ? 'sidebar-open' : ''}`}>
-      <Topbar onToggleSidebar={()=>setSidebarOpen(s=>!s)} onOpenSettings={()=>go('settings')} />
+      <Topbar onToggleSidebar={()=>setSidebarOpen(s=>!s)} onOpenSettings={()=>go('settings')} user={auth?.user} onLogout={()=>{ setAuth({ token:'', user:null }); setAuthToken(''); localStorage.removeItem('auth_token'); localStorage.removeItem('auth_user'); }} />
       <div className="body">
-        <Sidebar current={view} go={go} />
+        <Sidebar current={view} go={go} isAdmin={!!auth?.user?.isAdmin} />
         <main className="content">
-          {view === 'files' && <FilesPage />}
+          {view === 'files' && <FilesPage folderFilter={folderFilter} setFolderFilter={setFolderFilter} />}
           {view === 'folders' && <FoldersPage />}
+          {view === 'admin' && auth?.user?.isAdmin && <AdminPage />}
           {view === 'settings' && (
-            <Settings authed={authed} setAuthed={setAuthed} onExport={handleExport} onImport={handleImport} pin={pin} setPin={setPin} />
+            <Settings isAdmin={!!auth?.user?.isAdmin} authed={authed} setAuthed={setAuthed} onExport={handleExport} onImport={handleImport} pin={pin} setPin={setPin} />
           )}
         </main>
       </div>

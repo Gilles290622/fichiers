@@ -155,6 +155,16 @@ export const SettingsGearIcon = (props) => (
   </Icon>
 );
 
+// Authentication shield/lock icon
+export const AuthShieldIcon = (props) => (
+  <Icon {...props}>
+    <svg viewBox="0 0 24 24" width="100%" height="100%" fill="currentColor" aria-hidden>
+      <path d="M12 2 4 5v6c0 5 3.4 9.7 8 11 4.6-1.3 8-6 8-11V5l-8-3Z" opacity=".9"/>
+      <path d="M12 10a3 3 0 0 0-3 3v1a1 1 0 0 0 1 1v1a2 2 0 1 0 4 0v-1a1 1 0 0 0 1-1v-1a3 3 0 0 0-3-3Z" fill="#fff"/>
+    </svg>
+  </Icon>
+);
+
 // Additional action icons for menus
 export const EyeIcon = (props) => (
   <Icon {...props}>
